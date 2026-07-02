@@ -607,19 +607,42 @@ smtDashSize = input.string("Small", "Dashboard Textgröße", options=["Tiny", "S
 smtGetHl() => [high, low, close]
 var array<line> smtLines = array.new<line>()
 var array<label> smtLabels = array.new<label>()
+var array<float> smtInvalidLevels = array.new<float>()
+var array<bool> smtInvalidIsHighs = array.new<bool>()
+var array<int> smtInvalidSymbols = array.new<int>()
+
+smtDeleteObject(int idx) =>
+    line.delete(array.remove(smtLines, idx))
+    label.delete(array.remove(smtLabels, idx))
+    array.remove(smtInvalidLevels, idx)
+    array.remove(smtInvalidIsHighs, idx)
+    array.remove(smtInvalidSymbols, idx)
+
 smtTrimObjects() =>
     while array.size(smtLines) > smtMaxObjects
-        line.delete(array.shift(smtLines))
-    while array.size(smtLabels) > smtMaxObjects
-        label.delete(array.shift(smtLabels))
+        smtDeleteObject(0)
 
-smtDraw(int x1, float y1, int x2, float y2, string txt, color css, bool isHigh) =>
-    if smtEnabled and not na(y1) and not na(y2)
+smtDraw(int x1, float y1, int x2, float y2, string txt, color css, bool isHigh, float invalidLevel, int symbolIndex) =>
+    if smtEnabled and not na(y1) and not na(y2) and not na(invalidLevel)
         array.push(smtLines, line.new(x1, y1, x2, y2, color=css, width=1))
         array.push(smtLabels, label.new(x2, y2, txt, style=isHigh ? label.style_label_down : label.style_label_up, color=css, textcolor=color.white, size=size.tiny))
+        array.push(smtInvalidLevels, invalidLevel)
+        array.push(smtInvalidIsHighs, isHigh)
+        array.push(smtInvalidSymbols, symbolIndex)
         smtTrimObjects()
 
-smtDivergencePivot(bool isHigh, float chartPivot, float symbolPivot, color css, string txt) =>
+smtRemoveInvalidated(float symHigh, float symLow, int symbolIndex) =>
+    // Nur bestätigte Kerzen invalidieren bestehende SMTs: keine zukünftigen Kerzen, kein Repainting.
+    if barstate.isconfirmed and array.size(smtLines) > 0
+        for i = array.size(smtLines) - 1 to 0
+            sameSymbol = array.get(smtInvalidSymbols, i) == symbolIndex
+            isHighSmt = array.get(smtInvalidIsHighs, i)
+            invalidLevel = array.get(smtInvalidLevels, i)
+            invalidated = sameSymbol and ((isHighSmt and symHigh > invalidLevel) or (not isHighSmt and symLow < invalidLevel))
+            if invalidated
+                smtDeleteObject(i)
+
+smtDivergencePivot(bool isHigh, float chartPivot, float symbolPivot, color css, string txt, int symbolIndex) =>
     var float y1 = na
     var float symY1 = na
     var int x1 = na
@@ -627,22 +650,26 @@ smtDivergencePivot(bool isHigh, float chartPivot, float symbolPivot, color css, 
     if smtEnabled and smtMode == "Pivot bestätigt" and not na(chartPivot) and not na(symbolPivot)
         int x2 = bar_index - smtLength
         if not na(y1) and not na(symY1) and (chartPivot - y1) * (symbolPivot - symY1) < 0
-            smtDraw(x1, y1, x2, chartPivot, txt, css, isHigh)
+            smtDraw(x1, y1, x2, chartPivot, txt, css, isHigh, symY1, symbolIndex)
             smt += 1
         y1 := chartPivot
         symY1 := symbolPivot
         x1 := x2
     smt
 
-smtDivergenceFast(bool isHigh, float chartPrice, float symbolPrice, bool chartSwing, bool symbolSwing, color css, string txt) =>
+smtDivergenceFast(bool isHigh, float chartPrice, float symbolPrice, bool chartSwing, bool symbolSwing, color css, string txt, int symbolIndex) =>
     var float y1 = na
     var float symY1 = na
     var int x1 = na
     int smt = 0
     // Schnellmodus nutzt nur bestätigte Kerzenschlüsse und keine zukünftigen Kerzen.
-    if smtEnabled and smtMode == "Schnell" and barstate.isconfirmed and chartSwing and symbolSwing
-        if not na(y1) and not na(symY1) and (chartPrice - y1) * (symbolPrice - symY1) < 0
-            smtDraw(x1, y1, bar_index, chartPrice, txt, css, isHigh)
+    // Bearish SMT: Chart macht ein neues High, Vergleichssymbol überschreitet sein Referenz-High nicht.
+    // Bullish SMT: Chart macht ein neues Low, Vergleichssymbol unterschreitet sein Referenz-Low nicht.
+    if smtEnabled and smtMode == "Schnell" and barstate.isconfirmed and chartSwing
+        hasReference = not na(y1) and not na(symY1)
+        isDivergent = hasReference and (isHigh ? chartPrice > y1 and symbolPrice <= symY1 : chartPrice < y1 and symbolPrice >= symY1)
+        if isDivergent
+            smtDraw(x1, y1, bar_index, chartPrice, txt, css, isHigh, symY1, symbolIndex)
             smt += 1
         y1 := chartPrice
         symY1 := symbolPrice
@@ -661,15 +688,20 @@ smtSym2FastHigh = smtH2 > ta.highest(smtH2[1], smtLength)
 smtSym2FastLow = smtL2 < ta.lowest(smtL2[1], smtLength)
 var int smtHighCount1 = 0, var int smtLowCount1 = 0, var int smtHighCount2 = 0, var int smtLowCount2 = 0
 if smtUseSym1
-    smtHighCount1 += smtDivergenceFast(true, high, smtH1, smtChartFastHigh, smtSym1FastHigh, smtHighCss, smtTicker1)
-    smtLowCount1 += smtDivergenceFast(false, low, smtL1, smtChartFastLow, smtSym1FastLow, smtLowCss, smtTicker1)
-    smtHighCount1 += smtDivergencePivot(true, ta.pivothigh(high, smtLength, smtLength), ta.pivothigh(smtH1, smtLength, smtLength), smtHighCss, smtTicker1)
-    smtLowCount1 += smtDivergencePivot(false, ta.pivotlow(low, smtLength, smtLength), ta.pivotlow(smtL1, smtLength, smtLength), smtLowCss, smtTicker1)
+    smtHighCount1 += smtDivergenceFast(true, high, smtH1, smtChartFastHigh, smtSym1FastHigh, smtHighCss, smtTicker1, 1)
+    smtLowCount1 += smtDivergenceFast(false, low, smtL1, smtChartFastLow, smtSym1FastLow, smtLowCss, smtTicker1, 1)
+    smtHighCount1 += smtDivergencePivot(true, ta.pivothigh(high, smtLength, smtLength), ta.pivothigh(smtH1, smtLength, smtLength), smtHighCss, smtTicker1, 1)
+    smtLowCount1 += smtDivergencePivot(false, ta.pivotlow(low, smtLength, smtLength), ta.pivotlow(smtL1, smtLength, smtLength), smtLowCss, smtTicker1, 1)
 if smtUseSym2
-    smtHighCount2 += smtDivergenceFast(true, high, smtH2, smtChartFastHigh, smtSym2FastHigh, smtHighCss, smtTicker2)
-    smtLowCount2 += smtDivergenceFast(false, low, smtL2, smtChartFastLow, smtSym2FastLow, smtLowCss, smtTicker2)
-    smtHighCount2 += smtDivergencePivot(true, ta.pivothigh(high, smtLength, smtLength), ta.pivothigh(smtH2, smtLength, smtLength), smtHighCss, smtTicker2)
-    smtLowCount2 += smtDivergencePivot(false, ta.pivotlow(low, smtLength, smtLength), ta.pivotlow(smtL2, smtLength, smtLength), smtLowCss, smtTicker2)
+    smtHighCount2 += smtDivergenceFast(true, high, smtH2, smtChartFastHigh, smtSym2FastHigh, smtHighCss, smtTicker2, 2)
+    smtLowCount2 += smtDivergenceFast(false, low, smtL2, smtChartFastLow, smtSym2FastLow, smtLowCss, smtTicker2, 2)
+    smtHighCount2 += smtDivergencePivot(true, ta.pivothigh(high, smtLength, smtLength), ta.pivothigh(smtH2, smtLength, smtLength), smtHighCss, smtTicker2, 2)
+    smtLowCount2 += smtDivergencePivot(false, ta.pivotlow(low, smtLength, smtLength), ta.pivotlow(smtL2, smtLength, smtLength), smtLowCss, smtTicker2, 2)
+
+if smtUseSym1
+    smtRemoveInvalidated(smtH1, smtL1, 1)
+if smtUseSym2
+    smtRemoveInvalidated(smtH2, smtL2, 2)
 
 var smtTablePosition = smtDashLoc == "Bottom Left" ? position.bottom_left : smtDashLoc == "Top Right" ? position.top_right : position.bottom_right
 var smtTableSize = smtDashSize == "Tiny" ? size.tiny : smtDashSize == "Small" ? size.small : size.normal
