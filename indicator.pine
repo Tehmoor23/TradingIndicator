@@ -660,10 +660,15 @@ smtTicker2 = syminfo.ticker(smtSym2)
 //------------------------------------------------------------------------------}
 // Detect swing highs/lows and divergences
 //------------------------------------------------------------------------------{
-smtPh = fixnan(ta.pivothigh(smtLength, smtLength))
-smtPl = fixnan(ta.pivotlow(smtLength, smtLength))
-smtPhN += smtPh != smtPh[1] ? 1 : 0
-smtPlN += smtPl != smtPl[1] ? 1 : 0
+// SMT auf Pivot-Basis kann erst nach smtLength rechten Kerzen bestätigt werden. Die Anzeige erfolgt unmittelbar bei Bestätigung.
+smtPhRaw = ta.pivothigh(smtLength, smtLength)
+smtPlRaw = ta.pivotlow(smtLength, smtLength)
+smtPhConfirmed = not na(smtPhRaw)
+smtPlConfirmed = not na(smtPlRaw)
+smtPh = fixnan(smtPhRaw)
+smtPl = fixnan(smtPlRaw)
+smtPhN += smtPhConfirmed ? 1 : 0
+smtPlN += smtPlConfirmed ? 1 : 0
 
 // Comparison symbol pivots
 [smtH1, smtL1, smtC1] = request.security(smtSym1, timeframe.period, smtGetHl())
@@ -685,7 +690,7 @@ if smtUseSym2
     smtPlSmt2 := smtGetDivergence(false, smtPl, smtSymPl2, smtBearDivCss)
 
 smtTxt = ''
-if smtPh != smtPh[1]
+if smtPhConfirmed
     if smtPhSmt1 > smtPhSmt1[1]
         smtTxt += smtTicker1
     if smtPhSmt2 > smtPhSmt2[1]
@@ -698,7 +703,7 @@ if smtPh != smtPh[1]
           , style = label.style_label_down
           , textcolor = color.white
           , size = size.tiny)
-else
+else if smtPlConfirmed
     if smtPlSmt1 > smtPlSmt1[1]
         smtTxt += smtTicker1
     if smtPlSmt2 > smtPlSmt2[1]
