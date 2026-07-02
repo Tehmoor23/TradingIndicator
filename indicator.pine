@@ -1,5 +1,5 @@
-//@version=6
-indicator("iFVGPro", overlay = true, max_lines_count = 500, max_boxes_count = 500)
+//@version=5
+indicator("iFVGPro", overlay = true, max_lines_count = 500, max_boxes_count = 500, max_labels_count = 500)
 
 waitForClose = input.bool(true, "Wait for candle close to identify FVG?")
 
@@ -26,7 +26,7 @@ type fvg
     bool  rejected = false
     bool  touchedOnce = false  // ✅ Neu
     bool  inversed = false  // ✅ NEU: für iFVG-Verarbeitung
-    int inversionBar 
+    int inversionBar
 
 //----------------------------------------------------------------------------- // Funktionen
 n = bar_index
@@ -36,7 +36,7 @@ method tostyle(string s) => s == "Solid" ? line.style_solid : s == "Dashed" ? li
 detect() =>
     var new_fvg = fvg.new(na, na, false, na, na, na)
 
-    bull_fvg = low > high[2] and close[1] > high[2] 
+    bull_fvg = low > high[2] and close[1] > high[2]
     bear_fvg = high < low[2] and close[1] < low[2]
 
     isClosed = not waitForClose or barstate.isconfirmed
@@ -74,6 +74,7 @@ if bear_fvg and new_fvg.t != t
     bear_count += 1
     t := new_fvg.t
 
+show_iFVGFlank        = input.bool(true, "iFVG-Flanke anzeigen", group="iFVG")
 enable_iFVGMinPips     = input.bool(true, "Nur iFVGs ab Mindestgröße (Pips)?", group="iFVG")
 min_iFVGSizePips       = input.float(5.0, "Minimale iFVG-Größe (Pips)", minval=0.1, step=0.1, group="iFVG")
 enable_iFVGMomentum    = input.bool(false, "Nur iFVG mit Momentum-Kerze?", group="iFVG")
@@ -168,9 +169,12 @@ if array.size(fvg_records) > 0
                 box.set_bgcolor(b, color.new(color.gray, 85))
                 box.set_border_color(b, color.yellow)
                 box.set_border_width(b, 3)
-            priceLevel = f.isbull ? f.min : f.max
-            labelColor = f.isbull ? color.red : color.green
-            label.new(bar_index, priceLevel, "iFVG", style=f.isbull ? label.style_label_down : label.style_label_up, color=labelColor, textcolor=color.white, size=size.tiny)
+            // Die iFVG-Erkennung und der Alarm bleiben immer aktiv; nur die rote/grüne
+            // iFVG-Flanken-Darstellung wird optional ausgeblendet.
+            if show_iFVGFlank
+                priceLevel = f.isbull ? f.min : f.max
+                labelColor = f.isbull ? color.red : color.green
+                label.new(bar_index, priceLevel, "iFVG", style=f.isbull ? label.style_label_down : label.style_label_up, color=labelColor, textcolor=color.white, size=size.tiny)
             fire_iFVG := true
 
         if isMitigated and not f.inversed
@@ -221,17 +225,17 @@ type piv
     bool  mit
     bool  tak
     bool  wic
-    line  lin 
+    line  lin
 
-type boxBr 
-    box  bx 
+type boxBr
+    box  bx
     line ln
     bool br
     int  dr
 
 //--------------------- Parameter ---------------------
 len = input.int(1, 'Sweep Swings', minval=1, group='Liquidity Sweeps')
-opt = 'Only Wicks' 
+opt = 'Only Wicks'
 
 colBl  = #089981
 colBr  = #f23645
@@ -267,7 +271,7 @@ method br(piv get, color c3, color c, int d) =>
 
 lnDot(y, c) => line.new(n, y, n + 3, y, color=sweepLineColor, style=sweepLineStyle, width=sweepLineWidth)
 
-//----------------------------------------------------------------------------- // Liquidity Sweep Logik (neu mit robuster FVG-Filterung + Alarme)//----------------------------------------------------------------------------- 
+//----------------------------------------------------------------------------- // Liquidity Sweep Logik (neu mit robuster FVG-Filterung + Alarme)//-----------------------------------------------------------------------------
 
 // Option: Nur LQ innerhalb von FVG anzeigen
 onlyLQinsideFVG = input.bool(false, "Nur Liquidity Sweeps **innerhalb** von FVGs anzeigen?", group="Liquidity Sweeps")
@@ -566,7 +570,6 @@ if bearBreakNow and not na(lastLowTimeBOS)
 
 
 
-        
 
 
 
@@ -581,6 +584,178 @@ if bearBreakNow and not na(lastLowTimeBOS)
 
 
 
+
+
+
+// This work is licensed under a Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0) https://creativecommons.org/licenses/by-nc-sa/4.0/
+// © LuxAlgo
+
+//------------------------------------------------------------------------------
+// SMT Divergences [LuxAlgo] – in den bestehenden Indicator integriert
+//------------------------------------------------------------------------------
+// Settings
+//------------------------------------------------------------------------------{
+smtLength = input.int(3, 'Pivot Lookback', minval = 2, group = 'SMT')
+
+// Symbol A
+smtUseSym1 = input(true, 'Comparison Symbol', inline = 'smtSymA', group = 'SMT')
+smtSym1    = input.symbol('CME_MINI_DL:ES1!', '', inline = 'smtSymA', group = 'SMT')
+
+// Symbol B
+smtUseSym2 = input(true, 'Comparison Symbol', inline = 'smtSymB', group = 'SMT')
+smtSym2    = input.symbol('CBOT_MINI_DL:YM1!', '', inline = 'smtSymB', group = 'SMT')
+
+// Style
+smtBullDivCss = input.color(#ff1100, 'Swing High', group = 'SMT')
+smtBearDivCss = input.color(#2157f3, 'Swing Low', group = 'SMT')
+
+// Dashboard
+smtShowDash = input(false, 'Show Dashboard', group = 'SMT')
+smtDashLoc  = input.string('Top Right', 'Location', options = ['Top Right', 'Bottom Right', 'Bottom Left'], group = 'SMT')
+smtTextSize = input.string('Small', 'Size', options = ['Tiny', 'Small', 'Normal'], group = 'SMT')
+
+//------------------------------------------------------------------------------}
+// Function
+//------------------------------------------------------------------------------{
+smtN = bar_index
+
+smtGetHl() => [high, low, close]
+
+// Swing highs/lows divergences – original LuxAlgo logic with SMT-prefixed names only.
+smtGetDivergence(ph, y2, sym_y2, css)=>
+    var float y1 = na
+    var float sym_y1 = na
+    var int x1 = na
+    var smt = 0
+
+    if y2 != y2[1] and sym_y2 != sym_y2[1]
+        // Test for SMT
+        if (y2 - y1) * (sym_y2 - sym_y1) < 0
+            line.new(smtN[smtLength], y2, x1, y1, color = css)
+
+            smt += 1
+
+        sym_y1 := sym_y2
+        y1 := y2
+        x1 := smtN[smtLength]
+    else if (ph and y2 > y2[1]) or (not ph and y2 < y2[1])
+        sym_y1 := na
+        y1 := y2
+        x1 := smtN[smtLength]
+
+    smt
+
+//------------------------------------------------------------------------------}
+// Main variables
+//------------------------------------------------------------------------------{
+var smtPhN = 0, var smtPlN = 0
+var smtPhSmt1 = 0.
+var smtPlSmt1 = 0.
+var smtPhSmt2 = 0.
+var smtPlSmt2 = 0.
+
+smtTicker1 = syminfo.ticker(smtSym1)
+smtTicker2 = syminfo.ticker(smtSym2)
+
+//------------------------------------------------------------------------------}
+// Detect swing highs/lows and divergences
+//------------------------------------------------------------------------------{
+// SMT auf Pivot-Basis kann erst nach smtLength rechten Kerzen bestätigt werden. Die Anzeige erfolgt unmittelbar bei Bestätigung.
+smtPhRaw = ta.pivothigh(smtLength, smtLength)
+smtPlRaw = ta.pivotlow(smtLength, smtLength)
+smtPhConfirmed = not na(smtPhRaw)
+smtPlConfirmed = not na(smtPlRaw)
+smtPh = fixnan(smtPhRaw)
+smtPl = fixnan(smtPlRaw)
+smtPhN += smtPhConfirmed ? 1 : 0
+smtPlN += smtPlConfirmed ? 1 : 0
+
+// Comparison symbol pivots
+[smtH1, smtL1, smtC1] = request.security(smtSym1, timeframe.period, smtGetHl())
+[smtH2, smtL2, smtC2] = request.security(smtSym2, timeframe.period, smtGetHl())
+
+// Detect swing high/low divergences
+if smtUseSym1
+    smtSymPh1 = fixnan(ta.pivothigh(smtH1, smtLength, smtLength))
+    smtSymPl1 = fixnan(ta.pivotlow(smtL1, smtLength, smtLength))
+
+    smtPhSmt1 := smtGetDivergence(true, smtPh, smtSymPh1, smtBullDivCss)
+    smtPlSmt1 := smtGetDivergence(false, smtPl, smtSymPl1, smtBearDivCss)
+
+if smtUseSym2
+    smtSymPh2 = fixnan(ta.pivothigh(smtH2, smtLength, smtLength))
+    smtSymPl2 = fixnan(ta.pivotlow(smtL2, smtLength, smtLength))
+
+    smtPhSmt2 := smtGetDivergence(true, smtPh, smtSymPh2, smtBullDivCss)
+    smtPlSmt2 := smtGetDivergence(false, smtPl, smtSymPl2, smtBearDivCss)
+
+smtTxt = ''
+if smtPhConfirmed
+    if smtPhSmt1 > smtPhSmt1[1]
+        smtTxt += smtTicker1
+    if smtPhSmt2 > smtPhSmt2[1]
+        smtTxt += smtTxt != '' ? ' | ' : ''
+        smtTxt += smtTicker2
+
+    if smtTxt != ''
+        label.new(smtN[smtLength], smtPh, smtTxt
+          , color = smtBullDivCss
+          , style = label.style_label_down
+          , textcolor = color.white
+          , size = size.tiny)
+else if smtPlConfirmed
+    if smtPlSmt1 > smtPlSmt1[1]
+        smtTxt += smtTicker1
+    if smtPlSmt2 > smtPlSmt2[1]
+        smtTxt += smtTxt != '' ? ' | ' : ''
+        smtTxt += smtTicker2
+
+    if smtTxt != ''
+        label.new(smtN[smtLength], smtPl, smtTxt
+          , color = smtBearDivCss
+          , style = label.style_label_up
+          , textcolor = color.white
+          , size = size.tiny)
+
+//------------------------------------------------------------------------------}
+// Tables
+//------------------------------------------------------------------------------{
+var smtTablePosition = smtDashLoc == 'Bottom Left' ? position.bottom_left
+  : smtDashLoc == 'Top Right' ? position.top_right
+  : position.bottom_right
+
+var smtTableSize = smtTextSize == 'Tiny' ? size.tiny
+  : smtTextSize == 'Small' ? size.small
+  : size.normal
+
+var smtTb = table.new(smtTablePosition, 3, 3
+  , bgcolor = #1e222d
+  , border_color = #373a46
+  , border_width = 1
+  , frame_color = #373a46
+  , frame_width = 1)
+
+if barstate.isfirst and smtShowDash
+    smtTb.cell(1, 0, 'Swing High', text_color = color.white)
+    smtTb.cell(2, 0, 'Swing Low', text_color = color.white)
+
+    smtTb.cell(0, 1, smtTicker1, text_color = color.white)
+    smtTb.cell(0, 2, smtTicker2, text_color = color.white)
+
+if barstate.islast and smtShowDash
+    // Symbol 1
+    smtTb.cell(1, 1, str.format('{0} ({1, number, percent})', smtPhSmt1, smtPhSmt1 / smtPhN)
+      , text_color = smtBullDivCss)
+    smtTb.cell(2, 1, str.format('{0} ({1, number, percent})', smtPlSmt1, smtPlSmt1 / smtPlN)
+      , text_color = smtBearDivCss)
+
+    // Symbol 2
+    smtTb.cell(1, 2, str.format('{0} ({1, number, percent})', smtPhSmt2, smtPhSmt2 / smtPhN)
+      , text_color = smtBullDivCss)
+    smtTb.cell(2, 2, str.format('{0} ({1, number, percent})', smtPlSmt2, smtPlSmt2 / smtPlN)
+      , text_color = smtBearDivCss)
+
+//------------------------------------------------------------------------------}
 
 // Alerts
 alertcondition(bullishSweepInFVG or bearishSweepInFVG, title = "Sweep im FVG erkannt", message = "Liquidity Sweep innerhalb eines passenden FVG erkannt")
