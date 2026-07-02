@@ -1,0 +1,595 @@
+//@version=6
+indicator("iFVGPro", overlay = true, max_lines_count = 500, max_boxes_count = 500)
+
+waitForClose = input.bool(true, "Wait for candle close to identify FVG?")
+
+// FVG Setup Optionen
+tf = input.timeframe('', "Timeframe")
+
+extend = input.int(500, 'Extend', minval = 0, inline = 'extend', group = 'Style')
+
+
+bullCss = input.color(color.new(#089981, 70), "Bullish FVG", group = 'Style')
+bearCss = input.color(color.new(#f23645, 70), "Bearish FVG", group = 'Style')
+
+showLQSweeps = input.bool(true, "Liquidity Sweeps anzeigen", group="Liquidity Sweeps")
+
+
+//----------------------------------------------------------------------------- // UDTs
+type fvg
+    float max
+    float min
+    bool  isbull
+    int   t = time
+    int   leftIndex
+    int   rightIndex
+    bool  rejected = false
+    bool  touchedOnce = false  // ✅ Neu
+    bool  inversed = false  // ✅ NEU: für iFVG-Verarbeitung
+    int inversionBar 
+
+//----------------------------------------------------------------------------- // Funktionen
+n = bar_index
+method tosolid(color id) => color.rgb(color.r(id), color.g(id), color.b(id))
+method tostyle(string s) => s == "Solid" ? line.style_solid : s == "Dashed" ? line.style_dashed : line.style_dotted
+
+detect() =>
+    var new_fvg = fvg.new(na, na, false, na, na, na)
+
+    bull_fvg = low > high[2] and close[1] > high[2] 
+    bear_fvg = high < low[2] and close[1] < low[2]
+
+    isClosed = not waitForClose or barstate.isconfirmed
+    pipFactor = syminfo.mintick
+
+    bullSizeOk = true
+    bearSizeOk = true
+
+    if isClosed and bull_fvg and bullSizeOk
+        new_fvg := fvg.new(low, high[2], true, time, bar_index - 2, bar_index + extend)
+    else if isClosed and bear_fvg and bearSizeOk
+        new_fvg := fvg.new(low[2], high, false, time, bar_index - 2, bar_index + extend)
+
+    [bull_fvg, bear_fvg, new_fvg]
+
+//----------------------------------------------------------------------------- // FVG Detection / Darstellung
+var float max_bull_fvg = na, var float min_bull_fvg = na, var bull_count = 0, var bull_mitigated = 0
+var float max_bear_fvg = na, var float min_bear_fvg = na, var bear_count = 0, var bear_mitigated = 0
+var t = 0
+
+var fvg_records = array.new<fvg>(0)
+var fvg_areas = array.new<box>(0)
+
+[bull_fvg, bear_fvg, new_fvg] = request.security(syminfo.tickerid, tf, detect())
+
+if bull_fvg and new_fvg.t != t
+    fvg_areas.unshift(box.new(new_fvg.leftIndex, new_fvg.max, new_fvg.rightIndex, new_fvg.min, na, bgcolor = bullCss))
+    fvg_records.unshift(new_fvg)
+    bull_count += 1
+    t := new_fvg.t
+
+if bear_fvg and new_fvg.t != t
+    fvg_areas.unshift(box.new(new_fvg.leftIndex, new_fvg.max, new_fvg.rightIndex, new_fvg.min, na, bgcolor = bearCss))
+    fvg_records.unshift(new_fvg)
+    bear_count += 1
+    t := new_fvg.t
+
+enable_iFVGMinPips     = input.bool(true, "Nur iFVGs ab Mindestgröße (Pips)?", group="iFVG")
+min_iFVGSizePips       = input.float(5.0, "Minimale iFVG-Größe (Pips)", minval=0.1, step=0.1, group="iFVG")
+enable_iFVGMomentum    = input.bool(false, "Nur iFVG mit Momentum-Kerze?", group="iFVG")
+enable_iFVGMaxAge      = input.bool(false, "Nur iFVGs bis zu X Kerzen alt?", group="iFVG")
+max_iFVG_Age           = input.int(5, "Max. Kerzen seit FVG-Entstehung", minval=1, group="iFVG")
+// Singular FVG Einstellungen
+enableSingularFVG      = input.bool(false, "Nur 'Singular FVGs' anzeigen (Abstand zu nächster FVG)", group="iFVG")
+singularFVG_Pips       = input.float(50.0, "Min. Abstand (Pips) zur nächsten FVG", minval=0.1, step=0.1, group="iFVG")
+
+// Zusatzfunktion: Prüft, ob die Inversions-Kerze eine andere FVG der gleichen Richtung berührt
+touchesOtherFVG(f, allFVGs, invLow, invHigh) =>
+    touches = false
+    for i = 0 to array.size(allFVGs) - 1
+        f2 = array.get(allFVGs, i)
+        if (f2.leftIndex != f.leftIndex or f2.t != f.t) and f2.isbull == f.isbull
+            // Bullish: Kerze schneidet FVG-Range (außer eigene)
+            if f.isbull
+                if invLow < f2.max and invHigh > f2.min
+                    touches := true
+                    break
+            else
+                if invHigh > f2.min and invLow < f2.max
+                    touches := true
+                    break
+    touches
+
+// Singular FVG Check: Prüft Abstand zur nächsten FVG der gleichen Richtung (gerechnet vom Close der Inversion-Kerze)
+singularFVGPass(f, allFVGs, pipDist, invClose) =>
+    pass = true
+    if f.isbull
+        float nextHigh = na
+        for i = 0 to array.size(allFVGs) - 1
+            f2 = array.get(allFVGs, i)
+            if f2.isbull and f2.max < invClose
+                if na(nextHigh) or f2.max > nextHigh
+                    nextHigh := f2.max
+        if not na(nextHigh)
+            distPips = (invClose - nextHigh) / syminfo.mintick
+            if distPips < pipDist
+                pass := false
+    else
+        float nextLow = na
+        for i = 0 to array.size(allFVGs) - 1
+            f2 = array.get(allFVGs, i)
+            if not f2.isbull and f2.min > invClose
+                if na(nextLow) or f2.min < nextLow
+                    nextLow := f2.min
+        if not na(nextLow)
+            distPips = (nextLow - invClose) / syminfo.mintick
+            if distPips < pipDist
+                pass := false
+    pass
+
+
+
+
+
+
+//-----------------------------------------------------------------------------
+// FVG Mitigation & iFVG (Inversion) – Finale Darstellung (mit Richtung, MinPip-, MaxAge-, SingularFVG- und Overlap-Filter)
+//-----------------------------------------------------------------------------
+var bool fire_iFVG = false
+fire_iFVG := false
+
+if array.size(fvg_records) > 0
+    for i = array.size(fvg_records) - 1 to 0
+        f = array.get(fvg_records, i)
+        var box b = na
+        if array.size(fvg_areas) > i
+            b := array.get(fvg_areas, i)
+        isMitigated = (f.isbull and close < f.min) or (not f.isbull and close > f.max)
+        isInversion = (f.isbull and close < f.min and close < open) or (not f.isbull and close > f.max and close > open)
+        fvgPipSize = math.abs(f.max - f.min) / syminfo.mintick
+        allowInvert = not enable_iFVGMinPips or (fvgPipSize >= min_iFVGSizePips)
+        allowAge = not enable_iFVGMaxAge or (bar_index - f.leftIndex <= max_iFVG_Age)
+        // Momentum-Bedingung
+        passMomentum = true
+        if enable_iFVGMomentum
+            passMomentum := (low < f.min) and (high > f.max)
+        // Singular-FVG-Filter
+        passSingular = true
+        if enableSingularFVG
+            passSingular := singularFVGPass(f, fvg_records, singularFVG_Pips, close)
+        // Zusatz: Inversion-Kerze darf keine andere FVG derselben Richtung berühren
+        allowTouch = true
+        if enableSingularFVG
+            allowTouch := not touchesOtherFVG(f, fvg_records, low, high)
+
+        if isInversion and not f.inversed and allowInvert and passMomentum and allowAge and passSingular and allowTouch
+            f.inversed := true
+            if not na(b)
+                box.set_bgcolor(b, color.new(color.gray, 85))
+                box.set_border_color(b, color.yellow)
+                box.set_border_width(b, 3)
+            priceLevel = f.isbull ? f.min : f.max
+            labelColor = f.isbull ? color.red : color.green
+            label.new(bar_index, priceLevel, "iFVG", style=f.isbull ? label.style_label_down : label.style_label_up, color=labelColor, textcolor=color.white, size=size.tiny)
+            fire_iFVG := true
+
+        if isMitigated and not f.inversed
+            if array.size(fvg_areas) > i
+                area = array.remove(fvg_areas, i)
+                area.delete()
+            array.remove(fvg_records, i)
+            if f.isbull
+                bull_mitigated += 1
+            else
+                bear_mitigated += 1
+
+alertcondition(fire_iFVG, title="iFVG-Inversion erkannt", message="iFVG (inverse FVG) erkannt: Prüfe Setup!")
+
+
+
+
+
+
+
+
+
+//----------------------------------------------------------------------------- // Mitigation & Löschen
+if fvg_records.size() > 0
+    for i = fvg_records.size() - 1 to 0
+        get = fvg_records.get(i)
+        if get.isbull and close < get.min
+            if array.size(fvg_areas) > i
+                area = fvg_areas.remove(i)
+                area.delete()
+            fvg_records.remove(i)
+            bull_mitigated += 1
+        else if not get.isbull and close > get.max
+            if array.size(fvg_areas) > i
+                area = fvg_areas.remove(i)
+                area.delete()
+            fvg_records.remove(i)
+            bear_mitigated += 1
+
+//-----------------------------------------------------------------------------
+// Liquidity Sweep Logik (vollständig, aus LuxAlgo übernommen und angepasst)
+//-----------------------------------------------------------------------------
+
+type piv
+    float prc
+    int   bix
+    bool  brk
+    bool  mit
+    bool  tak
+    bool  wic
+    line  lin 
+
+type boxBr 
+    box  bx 
+    line ln
+    bool br
+    int  dr
+
+//--------------------- Parameter ---------------------
+len = input.int(1, 'Sweep Swings', minval=1, group='Liquidity Sweeps')
+opt = 'Only Wicks' 
+
+colBl  = #089981
+colBr  = #f23645
+colBl2 = #08998180
+colBr2 = #f2364580
+colBl3 = #08998141
+colBr3 = #f2364541
+
+//--------------------- Linien-Einstellungen ---------------------
+sweepLineColor = input.color(color.blue, "LQ-Linienfarbe", group="Liquidity Sweeps")
+sweepLineWidth = input.int(1, "LQ-Liniendicke", minval=1, maxval=5, group="Liquidity Sweeps")
+sweepLineStyleStr = input.string("Solid", "LQ-Linienstil", options=["Solid", "Dashed", "Dotted"], group="Liquidity Sweeps")
+sweepLineStyle = sweepLineStyleStr == "Solid" ? line.style_solid : sweepLineStyleStr == "Dashed" ? line.style_dashed : line.style_dotted
+
+oW = opt == 'Only Wicks'
+oO = opt == 'Only Outbreaks & Retest'
+WO = opt == 'Wicks + Outbreaks & Retest'
+
+
+//--------------------- Variablen ---------------------
+var array<piv> aPivH  = array.new<piv>(1, piv.new())
+var array<piv> aPivL  = array.new<piv>(1, piv.new())
+var array<boxBr> aBoxBr = array.new<boxBr>(1, boxBr.new())
+
+//--------------------- Methoden ---------------------
+method l(piv get, color c, string _style='') =>
+    line.new(get.bix, get.prc, n, get.prc, color=sweepLineColor, style=sweepLineStyle, width=sweepLineWidth)
+
+method br(piv get, color c3, color c, int d) =>
+    y1 = d == 1 ? high : get.prc
+    y2 = d == 1 ? get.prc : low
+    boxBr.new(box.new(n - 1, y1, n + 1, y2, border_color=color.new(na, na), bgcolor=c3),line.new(n, y1, n, y2, color=c, width=3),false,d)
+
+lnDot(y, c) => line.new(n, y, n + 3, y, color=sweepLineColor, style=sweepLineStyle, width=sweepLineWidth)
+
+//----------------------------------------------------------------------------- // Liquidity Sweep Logik (neu mit robuster FVG-Filterung + Alarme)//----------------------------------------------------------------------------- 
+
+// Option: Nur LQ innerhalb von FVG anzeigen
+onlyLQinsideFVG = input.bool(false, "Nur Liquidity Sweeps **innerhalb** von FVGs anzeigen?", group="Liquidity Sweeps")
+onlyWickInFVG   = input.bool(false, "Nur wenn **nur der Docht** die FVG berührt", group="Liquidity Sweeps")
+
+
+// Neue Funktion: Prüft, ob die WICK der aktuellen Kerze eine passende FVG berührt
+// Wick darf ÜBER oder UNTER die FVG hinausschießen – Hauptsache er schneidet sie irgendwo
+sweepInFVG(price, isBullishSweep) =>
+    result = false
+    size = array.size(fvg_records)
+    if size > 0
+        for i = 0 to size - 1
+            f = array.get(fvg_records, i)
+
+            // passende Richtung + noch aktiv im Chartfenster
+            if f.isbull == isBullishSweep and bar_index <= f.rightIndex
+                wickHigh = high
+                wickLow  = low
+
+                // Wick schneidet FVG (auch wenn er tiefer/höher geht)
+                wickTouches = wickHigh >= f.min and wickLow <= f.max
+
+                if wickTouches
+                    result := true
+                    break
+    result
+
+
+// Prüft: Nur der Docht ragt in die FVG hinein, Kerzenkörper liegt komplett außerhalb
+// Auch hier darf die Wick tiefer/höher gehen als die FVG — Hauptsache sie berührt die FVG
+wickOnlyInFVG(price, isBullishSweep) =>
+    wickPierces = false
+    size = array.size(fvg_records)
+    if size > 0
+        for i = 0 to size - 1
+            f = array.get(fvg_records, i)
+
+            if f.isbull == isBullishSweep and bar_index <= f.rightIndex
+                bodyHigh = math.max(open, close)
+                bodyLow  = math.min(open, close)
+
+                wickHigh = high
+                wickLow  = low
+
+                // Körper komplett außerhalb der FVG
+                bodyOutside = bodyHigh < f.min or bodyLow > f.max
+
+                // Docht berührt FVG irgendwo (auch wenn er darüber hinausgeht)
+                wickTouches = wickHigh >= f.min and wickLow <= f.max
+
+                wickPierces := bodyOutside and wickTouches
+
+                if wickPierces
+                    break
+    wickPierces
+wickOnlyInFVGbar(barOffset, isBullishFVG) =>
+    wickPierces = false
+    size = array.size(fvg_records)
+    if size > 0
+        for i = 0 to size - 1
+            f = fvg_records.get(i)
+            if f.isbull == isBullishFVG and bar_index <= f.rightIndex
+                bodyHigh = math.max(open[barOffset], close[barOffset])
+                bodyLow  = math.min(open[barOffset], close[barOffset])
+                wickHigh = high[barOffset]
+                wickLow  = low[barOffset]
+                bodyOutside = bodyHigh < f.min or bodyLow > f.max
+                wickTouches = wickHigh >= f.min and wickLow <= f.max
+                wickPierces := bodyOutside and wickTouches
+                if wickPierces
+                    break
+    wickPierces
+
+// Pivot-Struktur
+ph = ta.pivothigh(len, len)
+pl = ta.pivotlow(len, len)
+
+if not na(ph)
+    aPivH.unshift(piv.new(ph, n - len, false, false, false, false))
+if not na(pl)
+    aPivL.unshift(piv.new(pl, n - len, false, false, false, false))
+
+// Statusvariablen für Alarm
+var bool bullishSweepInFVG = false
+var bool bearishSweepInFVG = false
+bullishSweepInFVG := false
+bearishSweepInFVG := false
+var bool isSweepThisBar = false
+isSweepThisBar := false
+
+
+// Bearish Sweeps (aPivH)
+for i = aPivH.size() - 1 to 0
+    get = aPivH.get(i)
+    if not get.mit
+        if not get.brk
+            if close > get.prc
+                if not oW
+                    get.brk := true
+                else
+                    get.mit := true
+            if not oO and not get.wic
+                if high > get.prc and close < get.prc
+                    if (not onlyLQinsideFVG or sweepInFVG(high, false)) and (not onlyWickInFVG or wickOnlyInFVG(high, false))
+                        if showLQSweeps
+                            get.l(colBr2, 'dt')
+                            lnDot(low, colBr)
+                        get.wic := true
+                        bearishSweepInFVG := true
+                        isSweepThisBar := true
+                    else if not onlyLQinsideFVG and not onlyWickInFVG
+                        bearishSweepInFVG := true
+                        isSweepThisBar := true
+        else
+            if close < get.prc
+                get.mit := true
+            if not oW and low < get.prc and close > get.prc
+                if (not onlyLQinsideFVG or sweepInFVG(low, true)) and (not onlyWickInFVG or wickOnlyInFVG(low, true))
+                    if showLQSweeps
+                        get.l(colBl2, 'ds')
+                        lnDot(high, colBl)
+                    get.tak := true
+                    bullishSweepInFVG := true
+                    isSweepThisBar := true
+                else if not onlyLQinsideFVG and not onlyWickInFVG
+                    bullishSweepInFVG := true
+                    isSweepThisBar := true
+    if n - get.bix > 2000 or get.mit or get.tak
+        aPivH.remove(i).lin.delete()
+
+// Gleiches Prinzip im Block für Bullish Sweeps (aPivL)
+for i = aPivL.size() - 1 to 0
+    get = aPivL.get(i)
+    if not get.mit
+        if not get.brk
+            if close < get.prc
+                if not oW
+                    get.brk := true
+                else
+                    get.mit := true
+            if not oO and not get.wic
+                if low < get.prc and close > get.prc
+                    if (not onlyLQinsideFVG or sweepInFVG(low, true)) and (not onlyWickInFVG or wickOnlyInFVG(low, true))
+                        if showLQSweeps
+                            get.l(colBl2, 'dt')
+                            lnDot(high, colBl)
+                        get.wic := true
+                        bullishSweepInFVG := true
+                    else if not onlyLQinsideFVG and not onlyWickInFVG
+                        bullishSweepInFVG := true
+        else
+            if close > get.prc
+                get.mit := true
+            if not oW and high > get.prc and close < get.prc
+                if (not onlyLQinsideFVG or sweepInFVG(high, false)) and (not onlyWickInFVG or wickOnlyInFVG(high, false))
+                    if showLQSweeps
+                        get.l(colBr2, 'ds')
+                        lnDot(low, colBr)
+                    get.tak := true
+                    bearishSweepInFVG := true
+                    isSweepThisBar := true
+                else if not onlyLQinsideFVG and not onlyWickInFVG
+                    bearishSweepInFVG := true
+                    isSweepThisBar := true
+    if n - get.bix > 2000 or get.mit or get.tak
+        aPivL.remove(i).lin.delete()
+
+// --- First-Entry-Only pro FVG (persistierend via f.touchedOnce) ---
+fvgTouchedNow() =>
+    var bool touchedBull = false
+    var bool touchedBear = false
+    touchedBull := false
+    touchedBear := false
+
+    if array.size(fvg_records) > 0
+        for i = 0 to array.size(fvg_records) - 1
+            f = array.get(fvg_records, i)
+
+            // Nur aktive FVGs, die noch keinen Touch hatten
+            if bar_index <= f.rightIndex and not f.touchedOnce
+                // --- Bullish FVG: erster Eintritt von oben (Vorbar komplett außerhalb oberhalb der Zone)
+                prevOutsideBull = f.isbull and (low[1] >= f.max)    // Vorbar war über der oberen Kante
+                enterBull       = f.isbull and (low < f.max) and (high > f.min)  // aktuelle Bar schneidet die Zone
+
+                // --- Bearish FVG: erster Eintritt von unten (Vorbar komplett außerhalb unterhalb der Zone)
+                prevOutsideBear = (not f.isbull) and (high[1] <= f.min)          // Vorbar war unter der unteren Kante
+                enterBear       = (not f.isbull) and (high > f.min) and (low < f.max) // aktuelle Bar schneidet die Zone
+
+                condBull = prevOutsideBull and enterBull
+                condBear = prevOutsideBear and enterBear
+
+                if condBull or condBear
+                    // Sperre setzen und Objekt zurückschreiben (wichtig!)
+                    f.touchedOnce := true
+                    array.set(fvg_records, i, f)
+
+                    if condBull
+                        touchedBull := true
+                    if condBear
+                        touchedBear := true
+
+    [touchedBull, touchedBear]
+
+
+// --- Neu: Marker für aktuelle Bar merken ---
+var bool fireBearNow = false
+var bool fireBullNow = false
+fireBearNow := false
+fireBullNow := false
+
+var bool fireBear = false
+var bool fireBull = false
+fireBear := false
+fireBull := false
+
+
+
+//-----------------------------------------------------------------------------
+// BOS + MSS Anzeige (exakte Körperlogik wie im Originalindikator)
+//-----------------------------------------------------------------------------
+swingLengthBOS = input.int(25, "Swing Length (BOS/MSS)", minval = 1, group="BOS+MSS")
+
+bullColorBOS = input.color(color.green, "Bullish BOS/MSS Farbe", group="BOS+MSS")
+bearColorBOS = input.color(color.red, "Bearish BOS/MSS Farbe", group="BOS+MSS")
+lineStyleStr = input.string("Dashed", "Linienstil", options=["Solid", "Dashed", "Dotted"], group="BOS+MSS")
+lineWidth = input.int(1, "Linienstärke", group="BOS+MSS")
+textSize = input.string("Small", "Textgröße", options=["Tiny", "Small", "Normal", "Large"], group="BOS+MSS")
+
+getLineStyleBOS(styleStr) =>
+    styleStr == "Solid" ? line.style_solid : styleStr == "Dotted" ? line.style_dotted : line.style_dashed
+getTextSizeBOS(sizeStr) =>
+    sizeStr == "Tiny" ? size.tiny : sizeStr == "Normal" ? size.normal : sizeStr == "Large" ? size.large : size.small
+
+// Pivotpunkte
+phBOS = ta.pivothigh(high, swingLengthBOS, swingLengthBOS)
+plBOS = ta.pivotlow(low, swingLengthBOS, swingLengthBOS)
+
+var float lastHighBOS = na
+var float lastLowBOS = na
+var int lastHighTimeBOS = na
+var int lastLowTimeBOS = na
+var int lastBreakTypeBOS = 0  // 1 = bullish BOS, -1 = bearish BOS
+
+// Nur Close für Break prüfen (nicht Wick!)
+srcClose = close
+srcHighRef = close
+srcLowRef = close
+
+// Speichere letzte Pivot-Highs/-Lows
+if not na(phBOS)
+    lastHighBOS := phBOS
+    lastHighTimeBOS := time[swingLengthBOS]
+if not na(plBOS)
+    lastLowBOS := plBOS
+    lastLowTimeBOS := time[swingLengthBOS]
+
+// Prüfe Brüche durch Close
+bullBreak = not na(lastHighBOS) and close > lastHighBOS
+bearBreak = not na(lastLowBOS) and close < lastLowBOS
+
+// Neue Break-Variablen für *einmalige* Break-Erkennung (nur für fireBull/fireBear)
+bullBreakNow = not na(lastHighBOS) and (close > lastHighBOS) and (close[1] <= lastHighBOS)
+bearBreakNow = not na(lastLowBOS) and (close < lastLowBOS) and (close[1] >= lastLowBOS)
+
+tfLabel = str.tostring(timeframe.multiplier) + "m"
+var int bosMssCandleIndex = na
+// BOS/MSS Label & Linien
+if bullBreakNow and not na(lastHighTimeBOS)
+    isMSS = lastBreakTypeBOS == -1
+    tekst = isMSS ? "MSS\n" + tfLabel : "BOS\n" + tfLabel
+    //tekst = isMSS ? "MSS\n" + tfLabel + "\nH" + str.tostring(lastHighBOS, format.mintick) : "BOS\n" + tfLabel + "\nH" + str.tostring(lastHighBOS, format.mintick)
+    label.new(lastHighTimeBOS, lastHighBOS, tekst, xloc.bar_time, style=label.style_label_down, color=color.new(color.white, 100), textcolor=bullColorBOS, size=getTextSizeBOS(textSize))
+    fireBull := true
+    line.new(lastHighTimeBOS, lastHighBOS, time, lastHighBOS, xloc.bar_time, color=bullColorBOS, width=lineWidth, style=getLineStyleBOS(lineStyleStr))
+    lastBreakTypeBOS := 1
+    bosMssCandleIndex := bar_index
+
+if bearBreakNow and not na(lastLowTimeBOS)
+    isMSS = lastBreakTypeBOS == 1
+    tekst = isMSS ? "MSS\n" + tfLabel : "BOS\n" + tfLabel
+    // tekst = isMSS ? "MSS\n" + tfLabel + "\nL" + str.tostring(lastLowBOS, format.mintick) : "BOS\n" + tfLabel + "\nL" + str.tostring(lastLowBOS, format.mintick)
+    label.new(lastLowTimeBOS, lastLowBOS, tekst, xloc.bar_time, style=label.style_label_up, color=color.new(color.white, 100), textcolor=bearColorBOS, size=getTextSizeBOS(textSize))
+    fireBear := true
+    line.new(lastLowTimeBOS, lastLowBOS, time, lastLowBOS, xloc.bar_time, color=bearColorBOS, width=lineWidth, style=getLineStyleBOS(lineStyleStr))
+    lastBreakTypeBOS := -1
+    bosMssCandleIndex := bar_index
+
+
+
+
+
+
+
+
+
+
+
+        
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// Alerts
+alertcondition(bullishSweepInFVG or bearishSweepInFVG, title = "Sweep im FVG erkannt", message = "Liquidity Sweep innerhalb eines passenden FVG erkannt")
+alertcondition((bullishSweepInFVG or bearishSweepInFVG) and onlyWickInFVG, title = "Nur Docht-Sweep in FVG", message = "Nur der Docht hat die FVG berührt")
+alertcondition((bullishSweepInFVG or bearishSweepInFVG) and not onlyLQinsideFVG and not onlyWickInFVG, title = "Standard Liquidity Sweep", message = "Standard Liquidity Sweep erkannt (ohne FVG-Filter)")
+
+[touchBullFVG, touchBearFVG] = fvgTouchedNow()
+alertcondition(touchBullFVG or touchBearFVG, title="FVG Touch erkannt", message="Kerze berührt bzw. läuft in eine FVG hinein (bullish oder bearish)")
+//alertcondition(touchBullFVG, title="FVG Touch (Bullish)", message="Aktuelle Kerze berührt bullish FVG von oben")
+//alertcondition(touchBearFVG, title="FVG Touch (Bearish)", message="Aktuelle Kerze berührt bearish FVG von unten")
+
+
