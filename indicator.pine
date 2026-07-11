@@ -1003,8 +1003,48 @@ smt_textSize = input.string('Small', 'Size', options = ['Tiny', 'Small', 'Normal
 
 smt_get_hl() => [high, low, close]
 
+var array<line> smt_active_lines = array.new<line>()
+var array<int> smt_active_invalidators = array.new<int>()
+var array<bool> smt_active_is_high = array.new<bool>()
+var array<float> smt_active_levels = array.new<float>()
+
+smt_invalidated_by(int invalidator, bool is_high, float level, float sym_high, float sym_low) =>
+    invalidator == 0 ? (is_high ? high > level : low < level) : (is_high ? sym_high > level : sym_low < level)
+
+smt_invalidated_since_pivot(int invalidator, bool is_high, float level, float sym_high, float sym_low) =>
+    invalidator == 0 ? (is_high ? ta.highest(high, smt_length + 1) > level : ta.lowest(low, smt_length + 1) < level) : (is_high ? ta.highest(sym_high, smt_length + 1) > level : ta.lowest(sym_low, smt_length + 1) < level)
+
+smt_register_line(line smt_line, int invalidator, bool is_high, float level, float sym_high, float sym_low) =>
+    registered = false
+    if smt_invalidated_since_pivot(invalidator, is_high, level, sym_high, sym_low)
+        line.delete(smt_line)
+    else
+        array.push(smt_active_lines, smt_line)
+        array.push(smt_active_invalidators, invalidator)
+        array.push(smt_active_is_high, is_high)
+        array.push(smt_active_levels, level)
+        registered := true
+    registered
+
+smt_invalidate_lines(float sym1_high, float sym1_low, float sym2_high, float sym2_low) =>
+    if array.size(smt_active_lines) > 0
+        for i = array.size(smt_active_lines) - 1 to 0
+            smt_line = array.get(smt_active_lines, i)
+            invalidator = array.get(smt_active_invalidators, i)
+            is_high = array.get(smt_active_is_high, i)
+            level = array.get(smt_active_levels, i)
+            sym_high = invalidator == 1 ? sym1_high : sym2_high
+            sym_low = invalidator == 1 ? sym1_low : sym2_low
+            invalidated = smt_invalidated_by(invalidator, is_high, level, sym_high, sym_low)
+            if invalidated
+                line.delete(smt_line)
+                array.remove(smt_active_lines, i)
+                array.remove(smt_active_invalidators, i)
+                array.remove(smt_active_is_high, i)
+                array.remove(smt_active_levels, i)
+
 // Swing highs divergences
-smt_get_divergence(ph_mode, y2, sym_y2, css) =>
+smt_get_divergence(ph_mode, y2, sym_y2, css, sym_id, sym_high, sym_low) =>
     var float y1 = na
     var float sym_y1 = na
     var int x1 = na
@@ -1013,8 +1053,12 @@ smt_get_divergence(ph_mode, y2, sym_y2, css) =>
     if y2 != y2[1] and sym_y2 != sym_y2[1]
         // Test for SMT
         if (y2 - y1) * (sym_y2 - sym_y1) < 0
-            line.new(n[smt_length], y2, x1, y1, color = css)
-            smt += 1
+            smt_line = line.new(n[smt_length], y2, x1, y1, color = css)
+            chart_swept = ph_mode ? y2 > y1 : y2 < y1
+            invalidator = chart_swept ? sym_id : 0
+            invalidation_level = chart_swept ? sym_y1 : y1
+            if smt_register_line(smt_line, invalidator, ph_mode, invalidation_level, sym_high, sym_low)
+                smt += 1
 
         sym_y1 := sym_y2
         y1 := y2
@@ -1052,15 +1096,17 @@ if smt_useSym1
     smt_sym_ph1 = fixnan(ta.pivothigh(smt_h1, smt_length, smt_length))
     smt_sym_pl1 = fixnan(ta.pivotlow(smt_l1, smt_length, smt_length))
 
-    smt_ph_smt1 := smt_get_divergence(true, smt_ph, smt_sym_ph1, smt_bullDivCss)
-    smt_pl_smt1 := smt_get_divergence(false, smt_pl, smt_sym_pl1, smt_bearDivCss)
+    smt_ph_smt1 := smt_get_divergence(true, smt_ph, smt_sym_ph1, smt_bullDivCss, 1, smt_h1, smt_l1)
+    smt_pl_smt1 := smt_get_divergence(false, smt_pl, smt_sym_pl1, smt_bearDivCss, 1, smt_h1, smt_l1)
 
 if smt_useSym2
     smt_sym_ph2 = fixnan(ta.pivothigh(smt_h2, smt_length, smt_length))
     smt_sym_pl2 = fixnan(ta.pivotlow(smt_l2, smt_length, smt_length))
 
-    smt_ph_smt2 := smt_get_divergence(true, smt_ph, smt_sym_ph2, smt_bullDivCss)
-    smt_pl_smt2 := smt_get_divergence(false, smt_pl, smt_sym_pl2, smt_bearDivCss)
+    smt_ph_smt2 := smt_get_divergence(true, smt_ph, smt_sym_ph2, smt_bullDivCss, 2, smt_h2, smt_l2)
+    smt_pl_smt2 := smt_get_divergence(false, smt_pl, smt_sym_pl2, smt_bearDivCss, 2, smt_h2, smt_l2)
+
+smt_invalidate_lines(smt_h1, smt_l1, smt_h2, smt_l2)
 
 smt_txt = ''
 if smt_ph != smt_ph[1]
