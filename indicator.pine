@@ -925,8 +925,8 @@ isFractalHigh(i) =>
 isFractalLow(i) =>
     filterFractal == '3' ? isRegularFractal('Sell', i) : isBWFractal('Sell', i + 1)
 
-plotshape(showFractals and isFractalHigh(1), title = 'Fractal High', style = shape.triangledown, location = location.abovebar, color = color.new(color.red, 0), offset = filterFractal == '3' ? -1 : -2, size = size.auto)
-plotshape(showFractals and isFractalLow(1), title = 'Fractal Low', style = shape.triangleup, location = location.belowbar, color = color.new(color.lime, 0), offset = filterFractal == '3' ? -1 : -2, size = size.auto)
+plotshape(showFractals and isFractalHigh(1), title = 'Fractal High', style = shape.triangledown, location = location.abovebar, color = color.black, offset = filterFractal == '3' ? -1 : -2, size = size.auto)
+plotshape(showFractals and isFractalLow(1), title = 'Fractal Low', style = shape.triangleup, location = location.belowbar, color = color.black, offset = filterFractal == '3' ? -1 : -2, size = size.auto)
 
 // Pivots
 var string pivots_grp = "••••••• PIVOTS •••••••"
