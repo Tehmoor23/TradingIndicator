@@ -974,6 +974,7 @@ if not na(fractal_ph)
 
 
 
+
 //------------------------------------------------------------------------------
 // SMT Divergences [LuxAlgo] Integration
 // This work is licensed under a Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0)
@@ -1000,86 +1001,97 @@ smt_showDash = input.bool(false, 'Show Dashboard', group = 'SMT Divergences Dash
 smt_dashLoc = input.string('Top Right', 'Location', options = ['Top Right', 'Bottom Right', 'Bottom Left'], group = 'SMT Divergences Dashboard')
 smt_textSize = input.string('Small', 'Size', options = ['Tiny', 'Small', 'Normal'], group = 'SMT Divergences Dashboard')
 
-smt_get_hl() => [high, low, close]
+smt_get_live_hl_pivots() =>
+    [high, low, fixnan(ta.pivothigh(smt_length, smt_length)), fixnan(ta.pivotlow(smt_length, smt_length))]
 
-// Swing highs/lows divergences
-smt_get_divergence(ph_mode, y2, sym_y2, css) =>
-    var float y1 = na
-    var float sym_y1 = na
-    var int x1 = na
-    var int smt = 0
+smt_update_live_line(bool active, line active_line, label active_label, int x1, float y1, float y2, color css, string txt, bool is_high) =>
+    line next_line = active_line
+    label next_label = active_label
+    if active and not na(x1) and not na(y1) and not na(y2)
+        if na(next_line)
+            next_line := line.new(x1, y1, n, y2, color = css, width = 2)
+        else
+            line.set_xy1(next_line, x1, y1)
+            line.set_xy2(next_line, n, y2)
+            line.set_color(next_line, css)
 
-    if y2 != y2[1] and sym_y2 != sym_y2[1]
-        // Test for SMT
-        if (y2 - y1) * (sym_y2 - sym_y1) < 0
-            line.new(n[smt_length], y2, x1, y1, color = css)
-            smt += 1
+        label_y = is_high ? math.max(y1, y2) : math.min(y1, y2)
+        label_style = is_high ? label.style_label_down : label.style_label_up
+        if na(next_label)
+            next_label := label.new(n, label_y, txt, color = css, style = label_style, textcolor = color.white, size = size.tiny)
+        else
+            label.set_xy(next_label, n, label_y)
+            label.set_text(next_label, txt)
+            label.set_color(next_label, css)
+            label.set_style(next_label, label_style)
+            label.set_textcolor(next_label, color.white)
+    else
+        if not na(next_line)
+            line.delete(next_line)
+            next_line := na
+        if not na(next_label)
+            label.delete(next_label)
+            next_label := na
+    [next_line, next_label]
 
-        sym_y1 := sym_y2
-        y1 := y2
-        x1 := n[smt_length]
-    else if (ph_mode and y2 > y2[1]) or (not ph_mode and y2 < y2[1])
-        sym_y1 := na
-        y1 := y2
-        x1 := n[smt_length]
+var float smt_lastPh = na
+var float smt_lastPl = na
+var int smt_lastPhBar = na
+var int smt_lastPlBar = na
 
-    smt
+smt_rawPh = ta.pivothigh(smt_length, smt_length)
+smt_rawPl = ta.pivotlow(smt_length, smt_length)
 
-// Main variables
-var int smt_phN = 0
-var int smt_plN = 0
-var float smt_ph_smt1 = 0.0
-var float smt_pl_smt1 = 0.0
-var float smt_ph_smt2 = 0.0
-var float smt_pl_smt2 = 0.0
+if not na(smt_rawPh)
+    smt_lastPh := smt_rawPh
+    smt_lastPhBar := n[smt_length]
+if not na(smt_rawPl)
+    smt_lastPl := smt_rawPl
+    smt_lastPlBar := n[smt_length]
+
+[smt_h1, smt_l1, smt_symPh1, smt_symPl1] = request.security(smt_sym1, timeframe.period, smt_get_live_hl_pivots())
+[smt_h2, smt_l2, smt_symPh2, smt_symPl2] = request.security(smt_sym2, timeframe.period, smt_get_live_hl_pivots())
 
 smt_ticker1 = syminfo.ticker(smt_sym1)
 smt_ticker2 = syminfo.ticker(smt_sym2)
 
-// Detect swing highs/lows and divergences
-smt_ph = fixnan(ta.pivothigh(smt_length, smt_length))
-smt_pl = fixnan(ta.pivotlow(smt_length, smt_length))
-smt_phN += smt_ph != smt_ph[1] ? 1 : 0
-smt_plN += smt_pl != smt_pl[1] ? 1 : 0
+smt_chartSweepsHigh = not na(smt_lastPh) and high > smt_lastPh
+smt_chartSweepsLow = not na(smt_lastPl) and low < smt_lastPl
 
-// Comparison symbol pivots
-[smt_h1, smt_l1, smt_c1] = request.security(smt_sym1, timeframe.period, smt_get_hl())
-[smt_h2, smt_l2, smt_c2] = request.security(smt_sym2, timeframe.period, smt_get_hl())
+smt_sym1SweepsHigh = not na(smt_symPh1) and smt_h1 > smt_symPh1
+smt_sym1SweepsLow = not na(smt_symPl1) and smt_l1 < smt_symPl1
+smt_sym2SweepsHigh = not na(smt_symPh2) and smt_h2 > smt_symPh2
+smt_sym2SweepsLow = not na(smt_symPl2) and smt_l2 < smt_symPl2
 
-// Detect swing high divergences
-if smt_useSym1
-    smt_sym_ph1 = fixnan(ta.pivothigh(smt_h1, smt_length, smt_length))
-    smt_sym_pl1 = fixnan(ta.pivotlow(smt_l1, smt_length, smt_length))
+smt_liveHigh1 = smt_useSym1 and not na(smt_lastPh) and not na(smt_symPh1) and smt_chartSweepsHigh != smt_sym1SweepsHigh
+smt_liveLow1 = smt_useSym1 and not na(smt_lastPl) and not na(smt_symPl1) and smt_chartSweepsLow != smt_sym1SweepsLow
+smt_liveHigh2 = smt_useSym2 and not na(smt_lastPh) and not na(smt_symPh2) and smt_chartSweepsHigh != smt_sym2SweepsHigh
+smt_liveLow2 = smt_useSym2 and not na(smt_lastPl) and not na(smt_symPl2) and smt_chartSweepsLow != smt_sym2SweepsLow
 
-    smt_ph_smt1 := smt_get_divergence(true, smt_ph, smt_sym_ph1, smt_bullDivCss)
-    smt_pl_smt1 := smt_get_divergence(false, smt_pl, smt_sym_pl1, smt_bearDivCss)
+var line smt_highLine1 = na
+var label smt_highLabel1 = na
+var line smt_lowLine1 = na
+var label smt_lowLabel1 = na
+var line smt_highLine2 = na
+var label smt_highLabel2 = na
+var line smt_lowLine2 = na
+var label smt_lowLabel2 = na
 
-if smt_useSym2
-    smt_sym_ph2 = fixnan(ta.pivothigh(smt_h2, smt_length, smt_length))
-    smt_sym_pl2 = fixnan(ta.pivotlow(smt_l2, smt_length, smt_length))
+[smt_highLine1_next, smt_highLabel1_next] = smt_update_live_line(smt_liveHigh1, smt_highLine1, smt_highLabel1, smt_lastPhBar, smt_lastPh, high, smt_bullDivCss, smt_ticker1, true)
+smt_highLine1 := smt_highLine1_next
+smt_highLabel1 := smt_highLabel1_next
 
-    smt_ph_smt2 := smt_get_divergence(true, smt_ph, smt_sym_ph2, smt_bullDivCss)
-    smt_pl_smt2 := smt_get_divergence(false, smt_pl, smt_sym_pl2, smt_bearDivCss)
+[smt_lowLine1_next, smt_lowLabel1_next] = smt_update_live_line(smt_liveLow1, smt_lowLine1, smt_lowLabel1, smt_lastPlBar, smt_lastPl, low, smt_bearDivCss, smt_ticker1, false)
+smt_lowLine1 := smt_lowLine1_next
+smt_lowLabel1 := smt_lowLabel1_next
 
-smt_txt = ''
-if smt_ph != smt_ph[1]
-    if smt_ph_smt1 > smt_ph_smt1[1]
-        smt_txt += smt_ticker1
-    if smt_ph_smt2 > smt_ph_smt2[1]
-        smt_txt += smt_txt != '' ? ' | ' : ''
-        smt_txt += smt_ticker2
+[smt_highLine2_next, smt_highLabel2_next] = smt_update_live_line(smt_liveHigh2, smt_highLine2, smt_highLabel2, smt_lastPhBar, smt_lastPh, high, smt_bullDivCss, smt_ticker2, true)
+smt_highLine2 := smt_highLine2_next
+smt_highLabel2 := smt_highLabel2_next
 
-    if smt_txt != ''
-        label.new(n[smt_length], smt_ph, smt_txt, color = smt_bullDivCss, style = label.style_label_down, textcolor = color.white, size = size.tiny)
-else
-    if smt_pl_smt1 > smt_pl_smt1[1]
-        smt_txt += smt_ticker1
-    if smt_pl_smt2 > smt_pl_smt2[1]
-        smt_txt += smt_txt != '' ? ' | ' : ''
-        smt_txt += smt_ticker2
-
-    if smt_txt != ''
-        label.new(n[smt_length], smt_pl, smt_txt, color = smt_bearDivCss, style = label.style_label_up, textcolor = color.white, size = size.tiny)
+[smt_lowLine2_next, smt_lowLabel2_next] = smt_update_live_line(smt_liveLow2, smt_lowLine2, smt_lowLabel2, smt_lastPlBar, smt_lastPl, low, smt_bearDivCss, smt_ticker2, false)
+smt_lowLine2 := smt_lowLine2_next
+smt_lowLabel2 := smt_lowLabel2_next
 
 // Tables
 var smt_table_position = smt_dashLoc == 'Bottom Left' ? position.bottom_left : smt_dashLoc == 'Top Right' ? position.top_right : position.bottom_right
@@ -1090,18 +1102,14 @@ var smt_tb = table.new(smt_table_position, 3, 3, bgcolor = #1e222d, border_color
 if barstate.isfirst and smt_showDash
     smt_tb.cell(1, 0, 'Swing High', text_color = color.white, text_size = smt_table_size)
     smt_tb.cell(2, 0, 'Swing Low', text_color = color.white, text_size = smt_table_size)
-
     smt_tb.cell(0, 1, smt_ticker1, text_color = color.white, text_size = smt_table_size)
     smt_tb.cell(0, 2, smt_ticker2, text_color = color.white, text_size = smt_table_size)
 
 if barstate.islast and smt_showDash
-    // Symbol 1
-    smt_tb.cell(1, 1, str.format('{0} ({1, number, percent})', smt_ph_smt1, smt_ph_smt1 / smt_phN), text_color = smt_bullDivCss, text_size = smt_table_size)
-    smt_tb.cell(2, 1, str.format('{0} ({1, number, percent})', smt_pl_smt1, smt_pl_smt1 / smt_plN), text_color = smt_bearDivCss, text_size = smt_table_size)
-
-    // Symbol 2
-    smt_tb.cell(1, 2, str.format('{0} ({1, number, percent})', smt_ph_smt2, smt_ph_smt2 / smt_phN), text_color = smt_bullDivCss, text_size = smt_table_size)
-    smt_tb.cell(2, 2, str.format('{0} ({1, number, percent})', smt_pl_smt2, smt_pl_smt2 / smt_plN), text_color = smt_bearDivCss, text_size = smt_table_size)
+    smt_tb.cell(1, 1, smt_liveHigh1 ? 'Active' : '—', text_color = smt_bullDivCss, text_size = smt_table_size)
+    smt_tb.cell(2, 1, smt_liveLow1 ? 'Active' : '—', text_color = smt_bearDivCss, text_size = smt_table_size)
+    smt_tb.cell(1, 2, smt_liveHigh2 ? 'Active' : '—', text_color = smt_bullDivCss, text_size = smt_table_size)
+    smt_tb.cell(2, 2, smt_liveLow2 ? 'Active' : '—', text_color = smt_bearDivCss, text_size = smt_table_size)
 
 
 // Alerts
