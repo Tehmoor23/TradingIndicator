@@ -74,6 +74,7 @@ if bear_fvg and new_fvg.t != t
     bear_count += 1
     t := new_fvg.t
 
+show_iFVGFlank        = input.bool(true, "iFVG-Flanke anzeigen", group="iFVG")
 enable_iFVGMinPips     = input.bool(true, "Nur iFVGs ab Mindestgröße (Pips)?", group="iFVG")
 min_iFVGSizePips       = input.float(5.0, "Minimale iFVG-Größe (Pips)", minval=0.1, step=0.1, group="iFVG")
 enable_iFVGMomentum    = input.bool(false, "Nur iFVG mit Momentum-Kerze?", group="iFVG")
@@ -168,9 +169,10 @@ if array.size(fvg_records) > 0
                 box.set_bgcolor(b, color.new(color.gray, 85))
                 box.set_border_color(b, color.yellow)
                 box.set_border_width(b, 3)
-            priceLevel = f.isbull ? f.min : f.max
-            labelColor = f.isbull ? color.red : color.green
-            label.new(bar_index, priceLevel, "iFVG", style=f.isbull ? label.style_label_down : label.style_label_up, color=labelColor, textcolor=color.white, size=size.tiny)
+            if show_iFVGFlank
+                priceLevel = f.isbull ? f.min : f.max
+                labelColor = f.isbull ? color.red : color.green
+                label.new(bar_index, priceLevel, "iFVG", style=f.isbull ? label.style_label_down : label.style_label_up, color=labelColor, textcolor=color.white, size=size.tiny)
             fire_iFVG := true
 
         if isMitigated and not f.inversed
