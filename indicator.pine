@@ -982,7 +982,8 @@ if not na(fractal_ph)
 // © LuxAlgo
 //------------------------------------------------------------------------------
 // Settings
-smt_length = input.int(1, 'Pivot Lookback', minval = 1, group = 'SMT Divergences')
+smt_length = input.int(1, 'Pivot Lookback', minval = 0, group = 'SMT Divergences')
+smt_pivot_len = math.max(smt_length, 1)
 
 // Symbol A
 smt_useSym1 = input.bool(true, 'Comparison Symbol', inline = 'symA', group = 'SMT Divergences')
@@ -1102,8 +1103,8 @@ smt_ticker1 = syminfo.ticker(smt_sym1)
 smt_ticker2 = syminfo.ticker(smt_sym2)
 
 // Detect swing highs/lows and divergences
-smt_ph = fixnan(ta.pivothigh(smt_length, smt_length))
-smt_pl = fixnan(ta.pivotlow(smt_length, smt_length))
+smt_ph = smt_length == 0 ? high : fixnan(ta.pivothigh(smt_pivot_len, smt_pivot_len))
+smt_pl = smt_length == 0 ? low : fixnan(ta.pivotlow(smt_pivot_len, smt_pivot_len))
 smt_phN += smt_ph != smt_ph[1] ? 1 : 0
 smt_plN += smt_pl != smt_pl[1] ? 1 : 0
 
@@ -1113,15 +1114,15 @@ smt_plN += smt_pl != smt_pl[1] ? 1 : 0
 
 // Detect swing high divergences
 if smt_useSym1
-    smt_sym_ph1 = fixnan(ta.pivothigh(smt_h1, smt_length, smt_length))
-    smt_sym_pl1 = fixnan(ta.pivotlow(smt_l1, smt_length, smt_length))
+    smt_sym_ph1 = smt_length == 0 ? smt_h1 : fixnan(ta.pivothigh(smt_h1, smt_pivot_len, smt_pivot_len))
+    smt_sym_pl1 = smt_length == 0 ? smt_l1 : fixnan(ta.pivotlow(smt_l1, smt_pivot_len, smt_pivot_len))
 
     smt_ph_smt1 := smt_get_divergence(true, smt_ph, smt_sym_ph1, smt_bullDivCss, 1, smt_h1, smt_l1)
     smt_pl_smt1 := smt_get_divergence(false, smt_pl, smt_sym_pl1, smt_bearDivCss, 1, smt_h1, smt_l1)
 
 if smt_useSym2
-    smt_sym_ph2 = fixnan(ta.pivothigh(smt_h2, smt_length, smt_length))
-    smt_sym_pl2 = fixnan(ta.pivotlow(smt_l2, smt_length, smt_length))
+    smt_sym_ph2 = smt_length == 0 ? smt_h2 : fixnan(ta.pivothigh(smt_h2, smt_pivot_len, smt_pivot_len))
+    smt_sym_pl2 = smt_length == 0 ? smt_l2 : fixnan(ta.pivotlow(smt_l2, smt_pivot_len, smt_pivot_len))
 
     smt_ph_smt2 := smt_get_divergence(true, smt_ph, smt_sym_ph2, smt_bullDivCss, 2, smt_h2, smt_l2)
     smt_pl_smt2 := smt_get_divergence(false, smt_pl, smt_sym_pl2, smt_bearDivCss, 2, smt_h2, smt_l2)
