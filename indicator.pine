@@ -982,7 +982,7 @@ if not na(fractal_ph)
 // © LuxAlgo
 //------------------------------------------------------------------------------
 // Settings
-smt_length = input.int(3, 'Pivot Lookback', minval = 2, group = 'SMT Divergences')
+smt_length = input.int(1, 'Pivot Lookback', minval = 1, group = 'SMT Divergences')
 
 // Symbol A
 smt_useSym1 = input.bool(true, 'Comparison Symbol', inline = 'symA', group = 'SMT Divergences')
