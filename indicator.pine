@@ -1000,10 +1000,12 @@ smt_bearDivCss = input.color(#2157f3, 'Swing Low', group = 'SMT Divergences Styl
 smt_showDash = input.bool(false, 'Show Dashboard', group = 'SMT Divergences Dashboard')
 smt_dashLoc = input.string('Top Right', 'Location', options = ['Top Right', 'Bottom Right', 'Bottom Left'], group = 'SMT Divergences Dashboard')
 smt_textSize = input.string('Small', 'Size', options = ['Tiny', 'Small', 'Normal'], group = 'SMT Divergences Dashboard')
+smt_deleteLabelOnInvalidation = input.bool(true, 'Delete Label On Invalidation', group = 'SMT Divergences')
 
 smt_get_hl() => [high, low, close]
 
 var array<line> smt_active_lines = array.new<line>()
+var array<label> smt_active_labels = array.new<label>()
 var array<int> smt_active_invalidators = array.new<int>()
 var array<bool> smt_active_is_high = array.new<bool>()
 var array<float> smt_active_levels = array.new<float>()
@@ -1020,11 +1022,18 @@ smt_register_line(line smt_line, int invalidator, bool is_high, float level, flo
         line.delete(smt_line)
     else
         array.push(smt_active_lines, smt_line)
+        array.push(smt_active_labels, na)
         array.push(smt_active_invalidators, invalidator)
         array.push(smt_active_is_high, is_high)
         array.push(smt_active_levels, level)
         registered := true
     registered
+
+smt_attach_label(label smt_label, bool is_high) =>
+    if array.size(smt_active_labels) > 0
+        for i = 0 to array.size(smt_active_labels) - 1
+            if na(array.get(smt_active_labels, i)) and array.get(smt_active_is_high, i) == is_high
+                array.set(smt_active_labels, i, smt_label)
 
 smt_invalidate_lines(float sym1_high, float sym1_low, float sym2_high, float sym2_low) =>
     if array.size(smt_active_lines) > 0
@@ -1037,11 +1046,22 @@ smt_invalidate_lines(float sym1_high, float sym1_low, float sym2_high, float sym
             sym_low = invalidator == 1 ? sym1_low : sym2_low
             invalidated = smt_invalidated_by(invalidator, is_high, level, sym_high, sym_low)
             if invalidated
+                smt_label = array.get(smt_active_labels, i)
                 line.delete(smt_line)
                 array.remove(smt_active_lines, i)
+                array.remove(smt_active_labels, i)
                 array.remove(smt_active_invalidators, i)
                 array.remove(smt_active_is_high, i)
                 array.remove(smt_active_levels, i)
+                if smt_deleteLabelOnInvalidation and not na(smt_label)
+                    label_still_used = false
+                    if array.size(smt_active_labels) > 0
+                        for label_i = 0 to array.size(smt_active_labels) - 1
+                            if array.get(smt_active_labels, label_i) == smt_label
+                                label_still_used := true
+                                break
+                    if not label_still_used
+                        label.delete(smt_label)
 
 // Swing highs divergences
 smt_get_divergence(ph_mode, y2, sym_y2, css, sym_id, sym_high, sym_low) =>
@@ -1117,7 +1137,8 @@ if smt_ph != smt_ph[1]
         smt_txt += smt_ticker2
 
     if smt_txt != ''
-        label.new(n[smt_length], smt_ph, smt_txt, color = smt_bullDivCss, style = label.style_label_down, textcolor = color.white, size = size.tiny)
+        smt_new_label = label.new(n[smt_length], smt_ph, smt_txt, color = smt_bullDivCss, style = label.style_label_down, textcolor = color.white, size = size.tiny)
+        smt_attach_label(smt_new_label, true)
 else
     if smt_pl_smt1 > smt_pl_smt1[1]
         smt_txt += smt_ticker1
@@ -1126,7 +1147,8 @@ else
         smt_txt += smt_ticker2
 
     if smt_txt != ''
-        label.new(n[smt_length], smt_pl, smt_txt, color = smt_bearDivCss, style = label.style_label_up, textcolor = color.white, size = size.tiny)
+        smt_new_label = label.new(n[smt_length], smt_pl, smt_txt, color = smt_bearDivCss, style = label.style_label_up, textcolor = color.white, size = size.tiny)
+        smt_attach_label(smt_new_label, false)
 
 // Tables
 var smt_table_position = smt_dashLoc == 'Bottom Left' ? position.bottom_left : smt_dashLoc == 'Top Right' ? position.top_right : position.bottom_right
