@@ -907,6 +907,76 @@ plotshape(sessions_day != sessions_day[1] and sessions_day == 6 and show_day_div
 plotshape(sessions_day != sessions_day[1] and sessions_day == 7 and show_day_div, 'Saturday', shape.labeldown, location.top, na, text = 'Saturday', textcolor = color.gray, size = size.tiny, display = display.all - display.status_line, editable = false)
 
 
+
+
+//------------------------------------------------------------------------------
+// Fractals (Nephew_Sam_) Integration
+//------------------------------------------------------------------------------
+var string fractals_grp = "••••••• FRACTALS •••••••"
+showFractals = input.bool(true, title = 'Show fractal points?', group = fractals_grp)
+filterFractal = input.string(title = 'Filter 3/5 bar fractal', defval = '3', options = ['3', '5'], group = fractals_grp)
+
+isRegularFractal(mode, fractal_n) =>
+    ret = mode == 'Buy' ? high[fractal_n - 1] < high[fractal_n] and high[fractal_n + 1] < high[fractal_n] : mode == 'Sell' ? low[fractal_n - 1] > low[fractal_n] and low[fractal_n + 1] > low[fractal_n] : false
+    ret
+
+isBWFractal(mode, fractal_n) =>
+    ret = mode == 'Buy' ? high[fractal_n - 2] < high[fractal_n] and high[fractal_n - 1] < high[fractal_n] and high[fractal_n + 1] < high[fractal_n] and high[fractal_n + 2] < high[fractal_n] : mode == 'Sell' ? low[fractal_n - 2] > low[fractal_n] and low[fractal_n - 1] > low[fractal_n] and low[fractal_n + 1] > low[fractal_n] and low[fractal_n + 2] > low[fractal_n] : false
+    ret
+
+isFractalHigh(i) =>
+    filterFractal == '3' ? isRegularFractal('Buy', i) : isBWFractal('Buy', i + 1)
+
+isFractalLow(i) =>
+    filterFractal == '3' ? isRegularFractal('Sell', i) : isBWFractal('Sell', i + 1)
+
+plotshape(showFractals and isFractalHigh(1), title = 'Fractal High', style = shape.triangledown, location = location.abovebar, color = color.new(color.red, 0), offset = filterFractal == '3' ? -1 : -2, size = size.auto)
+plotshape(showFractals and isFractalLow(1), title = 'Fractal Low', style = shape.triangleup, location = location.belowbar, color = color.new(color.lime, 0), offset = filterFractal == '3' ? -1 : -2, size = size.auto)
+
+// Pivots
+var string pivots_grp = "••••••• PIVOTS •••••••"
+ShowPivots = input.bool(title = 'Show Pivot points?', defval = false, group = pivots_grp)
+fractal_lb = input.int(5, title = 'Left Bars', minval = 1, inline = '1', group = pivots_grp)
+fractal_rb = input.int(4, title = 'Right Bars', minval = 1, inline = '1', group = pivots_grp)
+showHHLL = input.bool(true, title = 'Show HH/LL?', group = pivots_grp)
+hhCol = input.color(color.lime, 'HH', inline = '2', group = pivots_grp)
+lhCol = input.color(color.red, 'LH', inline = '2', group = pivots_grp)
+llCol = input.color(color.red, 'LL', inline = '2', group = pivots_grp)
+hlCol = input.color(color.lime, 'HL', inline = '2', group = pivots_grp)
+
+var pivotHighs = array.new_float(3)
+var pivotLows = array.new_float(3)
+
+fractal_ph = ta.pivothigh(fractal_lb, fractal_rb)
+fractal_ph1 = ta.valuewhen(not na(fractal_ph), high[fractal_rb], 1)
+fractal_phSince = ta.barssince(not na(fractal_ph))
+
+fractal_pl = ta.pivotlow(fractal_lb, fractal_rb)
+fractal_pl1 = ta.valuewhen(not na(fractal_pl), low[fractal_rb], 1)
+
+hh = fractal_ph > fractal_ph1
+lh = fractal_ph < fractal_ph1
+ll = fractal_pl < fractal_pl1
+hl = fractal_pl > fractal_pl1
+
+_transparent = color.new(color.white, 100)
+
+plotshape(not na(fractal_ph) and ShowPivots and hh, title = 'HH', style = shape.triangledown, location = location.abovebar, text = 'HH', textcolor = showHHLL ? hhCol : _transparent, color = hhCol, offset = -fractal_rb, size = size.auto)
+plotshape(not na(fractal_ph) and ShowPivots and lh, title = 'LH', style = shape.triangledown, location = location.abovebar, text = 'LH', textcolor = showHHLL ? lhCol : _transparent, color = lhCol, offset = -fractal_rb, size = size.auto)
+
+plotshape(not na(fractal_pl) and ShowPivots and ll, title = 'LL', style = shape.triangleup, location = location.belowbar, text = 'LL', textcolor = showHHLL ? llCol : _transparent, color = llCol, offset = -fractal_rb, size = size.auto)
+plotshape(not na(fractal_pl) and ShowPivots and hl, title = 'HL', style = shape.triangleup, location = location.belowbar, text = 'HL', textcolor = showHHLL ? hlCol : _transparent, color = hlCol, offset = -fractal_rb, size = size.auto)
+
+var lastPH = 'na'
+var lastPL = 'na'
+
+if not na(fractal_ph)
+    if hh
+        lastPH := 'HH'
+    else if lh
+        lastPH := 'LH'
+
+
 // Alerts
 alertcondition(bullishSweepInFVG or bearishSweepInFVG, title = "Sweep im FVG erkannt", message = "Liquidity Sweep innerhalb eines passenden FVG erkannt")
 alertcondition((bullishSweepInFVG or bearishSweepInFVG) and onlyWickInFVG, title = "Nur Docht-Sweep in FVG", message = "Nur der Docht hat die FVG berührt")
