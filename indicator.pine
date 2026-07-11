@@ -898,13 +898,8 @@ plotshape(is_sesd != is_sesd[1] and show_ses_div and show_sesd, 'SYD', shape.lab
 sessions_day = dayofweek
 if sessions_day != sessions_day[1] and show_day_div
     line.new(n, close + syminfo.mintick, n, close - syminfo.mintick, color = color.gray, extend = extend.both, style = line.style_dashed)
-plotshape(sessions_day != sessions_day[1] and sessions_day == 1 and show_day_div, 'Sunday', shape.labeldown, location.top, na, text = 'Sunday', textcolor = color.gray, size = size.tiny, display = display.all - display.status_line, editable = false)
-plotshape(sessions_day != sessions_day[1] and sessions_day == 2 and show_day_div, 'Monday', shape.labeldown, location.top, na, text = 'Monday', textcolor = color.gray, size = size.tiny, display = display.all - display.status_line, editable = false)
-plotshape(sessions_day != sessions_day[1] and sessions_day == 3 and show_day_div, 'Tuesday', shape.labeldown, location.top, na, text = 'Tuesday', textcolor = color.gray, size = size.tiny, display = display.all - display.status_line, editable = false)
-plotshape(sessions_day != sessions_day[1] and sessions_day == 4 and show_day_div, 'Wednesay', shape.labeldown, location.top, na, text = 'Wednesday', textcolor = color.gray, size = size.tiny, display = display.all - display.status_line, editable = false)
-plotshape(sessions_day != sessions_day[1] and sessions_day == 5 and show_day_div, 'Thursday', shape.labeldown, location.top, na, text = 'Thursday', textcolor = color.gray, size = size.tiny, display = display.all - display.status_line, editable = false)
-plotshape(sessions_day != sessions_day[1] and sessions_day == 6 and show_day_div, 'Friday', shape.labeldown, location.top, na, text = 'Friday', textcolor = color.gray, size = size.tiny, display = display.all - display.status_line, editable = false)
-plotshape(sessions_day != sessions_day[1] and sessions_day == 7 and show_day_div, 'Saturday', shape.labeldown, location.top, na, text = 'Saturday', textcolor = color.gray, size = size.tiny, display = display.all - display.status_line, editable = false)
+    sessions_day_txt = sessions_day == 1 ? 'Sunday' : sessions_day == 2 ? 'Monday' : sessions_day == 3 ? 'Tuesday' : sessions_day == 4 ? 'Wednesday' : sessions_day == 5 ? 'Thursday' : sessions_day == 6 ? 'Friday' : 'Saturday'
+    label.new(n, high, sessions_day_txt, style = label.style_label_down, textcolor = color.gray, color = color.new(color.white, 100), size = size.tiny)
 
 
 
