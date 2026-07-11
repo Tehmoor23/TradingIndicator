@@ -972,6 +972,138 @@ if not na(fractal_ph)
         lastPH := 'LH'
 
 
+
+
+//------------------------------------------------------------------------------
+// SMT Divergences [LuxAlgo] Integration
+// This work is licensed under a Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0)
+// https://creativecommons.org/licenses/by-nc-sa/4.0/
+// © LuxAlgo
+//------------------------------------------------------------------------------
+// Settings
+smt_length = input.int(3, 'Pivot Lookback', minval = 2, group = 'SMT Divergences')
+
+// Symbol A
+smt_useSym1 = input.bool(true, 'Comparison Symbol', inline = 'symA', group = 'SMT Divergences')
+smt_sym1 = input.symbol('CME_MINI_DL:ES1!', '', inline = 'symA', group = 'SMT Divergences')
+
+// Symbol B
+smt_useSym2 = input.bool(true, 'Comparison Symbol', inline = 'symB', group = 'SMT Divergences')
+smt_sym2 = input.symbol('CBOT_MINI_DL:YM1!', '', inline = 'symB', group = 'SMT Divergences')
+
+// Style
+smt_bullDivCss = input.color(#ff1100, 'Swing High', group = 'SMT Divergences Style')
+smt_bearDivCss = input.color(#2157f3, 'Swing Low', group = 'SMT Divergences Style')
+
+// Dashboard
+smt_showDash = input.bool(false, 'Show Dashboard', group = 'SMT Divergences Dashboard')
+smt_dashLoc = input.string('Top Right', 'Location', options = ['Top Right', 'Bottom Right', 'Bottom Left'], group = 'SMT Divergences Dashboard')
+smt_textSize = input.string('Small', 'Size', options = ['Tiny', 'Small', 'Normal'], group = 'SMT Divergences Dashboard')
+
+smt_get_hl() => [high, low, close]
+
+// Swing highs/lows divergences
+smt_get_divergence(ph_mode, y2, sym_y2, css) =>
+    var float y1 = na
+    var float sym_y1 = na
+    var int x1 = na
+    var int smt = 0
+
+    if y2 != y2[1] and sym_y2 != sym_y2[1]
+        // Test for SMT
+        if (y2 - y1) * (sym_y2 - sym_y1) < 0
+            line.new(n[smt_length], y2, x1, y1, color = css)
+            smt += 1
+
+        sym_y1 := sym_y2
+        y1 := y2
+        x1 := n[smt_length]
+    else if (ph_mode and y2 > y2[1]) or (not ph_mode and y2 < y2[1])
+        sym_y1 := na
+        y1 := y2
+        x1 := n[smt_length]
+
+    smt
+
+// Main variables
+var int smt_phN = 0
+var int smt_plN = 0
+var float smt_ph_smt1 = 0.0
+var float smt_pl_smt1 = 0.0
+var float smt_ph_smt2 = 0.0
+var float smt_pl_smt2 = 0.0
+
+smt_ticker1 = syminfo.ticker(smt_sym1)
+smt_ticker2 = syminfo.ticker(smt_sym2)
+
+// Detect swing highs/lows and divergences
+smt_ph = fixnan(ta.pivothigh(smt_length, smt_length))
+smt_pl = fixnan(ta.pivotlow(smt_length, smt_length))
+smt_phN += smt_ph != smt_ph[1] ? 1 : 0
+smt_plN += smt_pl != smt_pl[1] ? 1 : 0
+
+// Comparison symbol pivots
+[smt_h1, smt_l1, smt_c1] = request.security(smt_sym1, timeframe.period, smt_get_hl())
+[smt_h2, smt_l2, smt_c2] = request.security(smt_sym2, timeframe.period, smt_get_hl())
+
+// Detect swing high divergences
+if smt_useSym1
+    smt_sym_ph1 = fixnan(ta.pivothigh(smt_h1, smt_length, smt_length))
+    smt_sym_pl1 = fixnan(ta.pivotlow(smt_l1, smt_length, smt_length))
+
+    smt_ph_smt1 := smt_get_divergence(true, smt_ph, smt_sym_ph1, smt_bullDivCss)
+    smt_pl_smt1 := smt_get_divergence(false, smt_pl, smt_sym_pl1, smt_bearDivCss)
+
+if smt_useSym2
+    smt_sym_ph2 = fixnan(ta.pivothigh(smt_h2, smt_length, smt_length))
+    smt_sym_pl2 = fixnan(ta.pivotlow(smt_l2, smt_length, smt_length))
+
+    smt_ph_smt2 := smt_get_divergence(true, smt_ph, smt_sym_ph2, smt_bullDivCss)
+    smt_pl_smt2 := smt_get_divergence(false, smt_pl, smt_sym_pl2, smt_bearDivCss)
+
+smt_txt = ''
+if smt_ph != smt_ph[1]
+    if smt_ph_smt1 > smt_ph_smt1[1]
+        smt_txt += smt_ticker1
+    if smt_ph_smt2 > smt_ph_smt2[1]
+        smt_txt += smt_txt != '' ? ' | ' : ''
+        smt_txt += smt_ticker2
+
+    if smt_txt != ''
+        label.new(n[smt_length], smt_ph, smt_txt, color = smt_bullDivCss, style = label.style_label_down, textcolor = color.white, size = size.tiny)
+else
+    if smt_pl_smt1 > smt_pl_smt1[1]
+        smt_txt += smt_ticker1
+    if smt_pl_smt2 > smt_pl_smt2[1]
+        smt_txt += smt_txt != '' ? ' | ' : ''
+        smt_txt += smt_ticker2
+
+    if smt_txt != ''
+        label.new(n[smt_length], smt_pl, smt_txt, color = smt_bearDivCss, style = label.style_label_up, textcolor = color.white, size = size.tiny)
+
+// Tables
+var smt_table_position = smt_dashLoc == 'Bottom Left' ? position.bottom_left : smt_dashLoc == 'Top Right' ? position.top_right : position.bottom_right
+var smt_table_size = smt_textSize == 'Tiny' ? size.tiny : smt_textSize == 'Small' ? size.small : size.normal
+
+var smt_tb = table.new(smt_table_position, 3, 3, bgcolor = #1e222d, border_color = #373a46, border_width = 1, frame_color = #373a46, frame_width = 1)
+
+if barstate.isfirst and smt_showDash
+    smt_tb.cell(1, 0, 'Swing High', text_color = color.white, text_size = smt_table_size)
+    smt_tb.cell(2, 0, 'Swing Low', text_color = color.white, text_size = smt_table_size)
+
+    smt_tb.cell(0, 1, smt_ticker1, text_color = color.white, text_size = smt_table_size)
+    smt_tb.cell(0, 2, smt_ticker2, text_color = color.white, text_size = smt_table_size)
+
+if barstate.islast and smt_showDash
+    // Symbol 1
+    smt_tb.cell(1, 1, str.format('{0} ({1, number, percent})', smt_ph_smt1, smt_ph_smt1 / smt_phN), text_color = smt_bullDivCss, text_size = smt_table_size)
+    smt_tb.cell(2, 1, str.format('{0} ({1, number, percent})', smt_pl_smt1, smt_pl_smt1 / smt_plN), text_color = smt_bearDivCss, text_size = smt_table_size)
+
+    // Symbol 2
+    smt_tb.cell(1, 2, str.format('{0} ({1, number, percent})', smt_ph_smt2, smt_ph_smt2 / smt_phN), text_color = smt_bullDivCss, text_size = smt_table_size)
+    smt_tb.cell(2, 2, str.format('{0} ({1, number, percent})', smt_pl_smt2, smt_pl_smt2 / smt_plN), text_color = smt_bearDivCss, text_size = smt_table_size)
+
+
 // Alerts
 alertcondition(bullishSweepInFVG or bearishSweepInFVG, title = "Sweep im FVG erkannt", message = "Liquidity Sweep innerhalb eines passenden FVG erkannt")
 alertcondition((bullishSweepInFVG or bearishSweepInFVG) and onlyWickInFVG, title = "Nur Docht-Sweep in FVG", message = "Nur der Docht hat die FVG berührt")
