@@ -1,33 +1,29 @@
 //@version=6
-// iFVGPro
+// iFVGPro+
+// Maintained as an AI-assisted personal research project by Tehmoor Bhatti.
 //
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+// Third-party components:
+// - Sessions module adapted from "Sessions [LuxAlgo]" by LuxAlgo.
+// - Liquidity sweep logic adapted from "Liquidity Sweeps [LuxAlgo]" by LuxAlgo.
+// - Fractals and pivots module adapted from work by TradingView author nephew_sam_.
 //
-// Third-party attribution:
-// Portions of the liquidity sweep logic are adapted from
-// "Liquidity Sweeps [LuxAlgo]":
-// https://www.tradingview.com/script/JRqryeJ5-Liquidity-Sweeps-LuxAlgo/
-// Original liquidity sweep implementation © LuxAlgo.
+// LuxAlgo-derived components are licensed under CC BY-NC-SA 4.0:
+// https://creativecommons.org/licenses/by-nc-sa/4.0/
+// Modifications include integration, FVG filters, alert logic, naming, and formatting.
+//
+// For educational and research purposes only. Not financial advice.
 
-indicator("iFVGPro", overlay = true, max_lines_count = 500, max_boxes_count = 500)
-
+indicator("iFVGPro+", overlay = true, max_lines_count = 500, max_boxes_count = 500, max_labels_count = 500, max_bars_back = 500)
 waitForClose = input.bool(true, "Wait for candle close to identify FVG?")
 
 // FVG settings
 tf = input.timeframe('', "Timeframe")
-
-extend = input.int(500, 'Extend', minval = 0, inline = 'extend', group = 'Style')
-
+fvgExtend = input.int(500, 'Extend', minval = 0, inline = 'extend', group = 'Style')
 bullCss = input.color(color.new(#089981, 70), "Bullish FVG", group = 'Style')
 bearCss = input.color(color.new(#f23645, 70), "Bearish FVG", group = 'Style')
+showLQSweeps = input.bool(true, "Show Liquidity Sweeps", group = "Liquidity Sweeps")
 
-showLQSweeps = input.bool(true, "Show liquidity sweeps", group="Liquidity Sweeps")
-
-//-----------------------------------------------------------------------------
-// Data structures
-//-----------------------------------------------------------------------------
+// User-defined types
 type fvg
     float max
     float min
@@ -38,76 +34,60 @@ type fvg
     bool  rejected = false
     bool  touchedOnce = false
     bool  inversed = false
-    int inversionBar 
+    int inversionBar
 
-//-----------------------------------------------------------------------------
-// FVG detection
-//-----------------------------------------------------------------------------
+// Helpers
 n = bar_index
 method tosolid(color id) => color.rgb(color.r(id), color.g(id), color.b(id))
 method tostyle(string s) => s == "Solid" ? line.style_solid : s == "Dashed" ? line.style_dashed : line.style_dotted
-
 detect() =>
     var new_fvg = fvg.new(na, na, false, na, na, na)
-
-    bull_fvg = low > high[2] and close[1] > high[2] 
+    bull_fvg = low > high[2] and close[1] > high[2]
     bear_fvg = high < low[2] and close[1] < low[2]
-
     isClosed = not waitForClose or barstate.isconfirmed
     pipFactor = syminfo.mintick
-
     bullSizeOk = true
     bearSizeOk = true
-
     if isClosed and bull_fvg and bullSizeOk
-        new_fvg := fvg.new(low, high[2], true, time, bar_index - 2, bar_index + extend)
+        new_fvg := fvg.new(low, high[2], true, time, bar_index - 2, bar_index + fvgExtend)
     else if isClosed and bear_fvg and bearSizeOk
-        new_fvg := fvg.new(low[2], high, false, time, bar_index - 2, bar_index + extend)
-
+        new_fvg := fvg.new(low[2], high, false, time, bar_index - 2, bar_index + fvgExtend)
     [bull_fvg, bear_fvg, new_fvg]
-
-//-----------------------------------------------------------------------------
-// FVG visualization
-//-----------------------------------------------------------------------------
+// FVG detection and rendering
 var float max_bull_fvg = na, var float min_bull_fvg = na, var bull_count = 0, var bull_mitigated = 0
 var float max_bear_fvg = na, var float min_bear_fvg = na, var bear_count = 0, var bear_mitigated = 0
 var t = 0
-
 var fvg_records = array.new<fvg>(0)
 var fvg_areas = array.new<box>(0)
-
 [bull_fvg, bear_fvg, new_fvg] = request.security(syminfo.tickerid, tf, detect())
-
 if bull_fvg and new_fvg.t != t
     fvg_areas.unshift(box.new(new_fvg.leftIndex, new_fvg.max, new_fvg.rightIndex, new_fvg.min, na, bgcolor = bullCss))
     fvg_records.unshift(new_fvg)
     bull_count += 1
     t := new_fvg.t
-
 if bear_fvg and new_fvg.t != t
     fvg_areas.unshift(box.new(new_fvg.leftIndex, new_fvg.max, new_fvg.rightIndex, new_fvg.min, na, bgcolor = bearCss))
     fvg_records.unshift(new_fvg)
     bear_count += 1
     t := new_fvg.t
-
-show_iFVGFlank        = input.bool(true, "Show iFVG marker", group="iFVG")
-enable_iFVGMinPips     = input.bool(true, "Require minimum iFVG size?", group="iFVG")
-min_iFVGSizePips       = input.float(5.0, "Minimum iFVG size (pips)", minval=0.1, step=0.1, group="iFVG")
-enable_iFVGMomentum    = input.bool(false, "Require iFVG momentum candle?", group="iFVG")
-enable_iFVGMaxAge      = input.bool(false, "Limit iFVG age?", group="iFVG")
-max_iFVG_Age           = input.int(5, "Maximum bars since FVG creation", minval=1, group="iFVG")
+show_iFVGFlank        = input.bool(true, "Show iFVG Level", group = "iFVG")
+enable_iFVGMinPips     = input.bool(true, "Require Minimum iFVG Size?", group = "iFVG")
+min_iFVGSizePips       = input.float(5.0, "Minimum iFVG Size (Pips)", minval = 0.1, step = 0.1, group = "iFVG")
+enable_iFVGMomentum    = input.bool(false, "Require Momentum Candle?", group = "iFVG")
+enable_iFVGMaxAge      = input.bool(false, "Limit iFVG Age?", group = "iFVG")
+max_iFVG_Age           = input.int(5, "Maximum Bars Since FVG Formation", minval = 1, group = "iFVG")
 
 // Singular FVG settings
-enableSingularFVG      = input.bool(false, "Show only singular FVGs", group="iFVG")
-singularFVG_Pips       = input.float(50.0, "Minimum distance to next FVG (pips)", minval=0.1, step=0.1, group="iFVG")
+enableSingularFVG      = input.bool(false, "Only Show Singular FVGs?", group = "iFVG")
+singularFVG_Pips       = input.float(50.0, "Minimum Distance to Next FVG (Pips)", minval = 0.1, step = 0.1, group = "iFVG")
 
-// Checks whether the inversion candle intersects another FVG in the same direction.
+// Checks whether the inversion candle intersects another same-direction FVG
 touchesOtherFVG(f, allFVGs, invLow, invHigh) =>
     touches = false
     for i = 0 to array.size(allFVGs) - 1
         f2 = array.get(allFVGs, i)
         if (f2.leftIndex != f.leftIndex or f2.t != f.t) and f2.isbull == f.isbull
-            // Ignore the current FVG and test for overlap with another active range.
+            // Ignore the current FVG and check overlap with another matching zone
             if f.isbull
                 if invLow < f2.max and invHigh > f2.min
                     touches := true
@@ -117,8 +97,7 @@ touchesOtherFVG(f, allFVGs, invLow, invHigh) =>
                     touches := true
                     break
     touches
-
-// Measures the distance from the inversion close to the next FVG in the same direction.
+// Measures the distance from the inversion close to the next same-direction FVG
 singularFVGPass(f, allFVGs, pipDist, invClose) =>
     pass = true
     if f.isbull
@@ -144,13 +123,9 @@ singularFVGPass(f, allFVGs, pipDist, invClose) =>
             if distPips < pipDist
                 pass := false
     pass
-
-//-----------------------------------------------------------------------------
-// FVG mitigation and inversion handling
-//-----------------------------------------------------------------------------
+// FVG mitigation and iFVG inversion
 var bool fire_iFVG = false
 fire_iFVG := false
-
 if array.size(fvg_records) > 0
     for i = array.size(fvg_records) - 1 to 0
         f = array.get(fvg_records, i)
@@ -162,19 +137,18 @@ if array.size(fvg_records) > 0
         fvgPipSize = math.abs(f.max - f.min) / syminfo.mintick
         allowInvert = not enable_iFVGMinPips or (fvgPipSize >= min_iFVGSizePips)
         allowAge = not enable_iFVGMaxAge or (bar_index - f.leftIndex <= max_iFVG_Age)
-        // Optional momentum filter.
+        // Optional momentum filter
         passMomentum = true
         if enable_iFVGMomentum
             passMomentum := (low < f.min) and (high > f.max)
-        // Optional distance filter for singular FVGs.
+        // Optional singular-FVG filter
         passSingular = true
         if enableSingularFVG
             passSingular := singularFVGPass(f, fvg_records, singularFVG_Pips, close)
-        // Prevent the inversion candle from touching another same-direction FVG.
+        // When the singular filter is enabled, reject overlapping FVGs
         allowTouch = true
         if enableSingularFVG
             allowTouch := not touchesOtherFVG(f, fvg_records, low, high)
-
         if isInversion and not f.inversed and allowInvert and passMomentum and allowAge and passSingular and allowTouch
             f.inversed := true
             if not na(b)
@@ -186,7 +160,6 @@ if array.size(fvg_records) > 0
                 labelColor = f.isbull ? color.red : color.green
                 label.new(bar_index, priceLevel, "iFVG", style=f.isbull ? label.style_label_down : label.style_label_up, color=labelColor, textcolor=color.white, size=size.tiny)
             fire_iFVG := true
-
         if isMitigated and not f.inversed
             if array.size(fvg_areas) > i
                 area = array.remove(fvg_areas, i)
@@ -196,12 +169,9 @@ if array.size(fvg_records) > 0
                 bull_mitigated += 1
             else
                 bear_mitigated += 1
+alertcondition(fire_iFVG, title = "iFVG Inversion Detected", message = "An iFVG inversion was detected. Review the setup.")
 
-alertcondition(fire_iFVG, title="iFVG inversion detected", message="An inverse FVG was detected. Review the setup.")
-
-//-----------------------------------------------------------------------------
-// Remove mitigated FVGs
-//-----------------------------------------------------------------------------
+// FVG mitigation and cleanup
 if fvg_records.size() > 0
     for i = fvg_records.size() - 1 to 0
         get = fvg_records.get(i)
@@ -217,13 +187,9 @@ if fvg_records.size() > 0
                 area.delete()
             fvg_records.remove(i)
             bear_mitigated += 1
-
-//-----------------------------------------------------------------------------
-// Liquidity sweep detection
-// Adapted from "Liquidity Sweeps [LuxAlgo]" and integrated with the FVG logic.
-// Original: https://www.tradingview.com/script/JRqryeJ5-Liquidity-Sweeps-LuxAlgo/
-//-----------------------------------------------------------------------------
-
+// Liquidity sweep logic adapted from "Liquidity Sweeps [LuxAlgo]" by LuxAlgo
+// Source: https://www.tradingview.com/script/JRqryeJ5-Liquidity-Sweeps-LuxAlgo/
+// License: CC BY-NC-SA 4.0 — https://creativecommons.org/licenses/by-nc-sa/4.0/
 type piv
     float prc
     int   bix
@@ -231,101 +197,79 @@ type piv
     bool  mit
     bool  tak
     bool  wic
-    line  lin 
-
-type boxBr 
-    box  bx 
+    line  lin
+type boxBr
+    box  bx
     line ln
     bool br
     int  dr
-
-// Parameters
+// Sweep settings
 len = input.int(1, 'Sweep Swings', minval=1, group='Liquidity Sweeps')
-opt = 'Only Wicks' 
-
+opt = 'Only Wicks'
 colBl  = #089981
 colBr  = #f23645
 colBl2 = #08998180
 colBr2 = #f2364580
 colBl3 = #08998141
 colBr3 = #f2364541
-
 // Line settings
-sweepLineColor = input.color(color.blue, "Sweep line color", group="Liquidity Sweeps")
-sweepLineWidth = input.int(1, "Sweep line width", minval=1, maxval=5, group="Liquidity Sweeps")
-sweepLineStyleStr = input.string("Solid", "Sweep line style", options=["Solid", "Dashed", "Dotted"], group="Liquidity Sweeps")
+sweepLineColor = input.color(color.blue, "Sweep Line Color", group = "Liquidity Sweeps")
+sweepLineWidth = input.int(1, "Sweep Line Width", minval = 1, maxval = 5, group = "Liquidity Sweeps")
+sweepLineStyleStr = input.string("Solid", "Sweep Line Style", options = ["Solid", "Dashed", "Dotted"], group = "Liquidity Sweeps")
 sweepLineStyle = sweepLineStyleStr == "Solid" ? line.style_solid : sweepLineStyleStr == "Dashed" ? line.style_dashed : line.style_dotted
-
 oW = opt == 'Only Wicks'
 oO = opt == 'Only Outbreaks & Retest'
 WO = opt == 'Wicks + Outbreaks & Retest'
-
 // State
 var array<piv> aPivH  = array.new<piv>(1, piv.new())
 var array<piv> aPivL  = array.new<piv>(1, piv.new())
 var array<boxBr> aBoxBr = array.new<boxBr>(1, boxBr.new())
-
 // Drawing helpers
 method l(piv get, color c, string _style='') =>
     line.new(get.bix, get.prc, n, get.prc, color=sweepLineColor, style=sweepLineStyle, width=sweepLineWidth)
-
 method br(piv get, color c3, color c, int d) =>
     y1 = d == 1 ? high : get.prc
     y2 = d == 1 ? get.prc : low
     boxBr.new(box.new(n - 1, y1, n + 1, y2, border_color=color.new(na, na), bgcolor=c3),line.new(n, y1, n, y2, color=c, width=3),false,d)
-
 lnDot(y, c) => line.new(n, y, n + 3, y, color=sweepLineColor, style=sweepLineStyle, width=sweepLineWidth)
+// FVG-aware liquidity sweep filters
+onlyLQinsideFVG = input.bool(false, "Only Show Sweeps Inside FVGs?", group = "Liquidity Sweeps")
+onlyWickInFVG   = input.bool(false, "Require Wick-Only FVG Touch?", group = "Liquidity Sweeps")
 
-//-----------------------------------------------------------------------------
-// FVG-filtered liquidity sweeps and alerts
-//-----------------------------------------------------------------------------
-onlyLQinsideFVG = input.bool(false, "Show only liquidity sweeps inside an FVG", group="Liquidity Sweeps")
-onlyWickInFVG   = input.bool(false, "Require wick-only contact with the FVG", group="Liquidity Sweeps")
-
-// Checks whether the current candle wick intersects a matching active FVG.
+// Checks whether the current candle wick intersects a matching FVG
 sweepInFVG(price, isBullishSweep) =>
     result = false
     size = array.size(fvg_records)
     if size > 0
         for i = 0 to size - 1
             f = array.get(fvg_records, i)
-
-            // Match the FVG direction and keep the check inside its active range.
+            // Match direction and keep the check within the active chart range
             if f.isbull == isBullishSweep and bar_index <= f.rightIndex
                 wickHigh = high
                 wickLow  = low
-
-                // The wick may extend beyond the FVG as long as both ranges intersect.
+                // A wick may extend beyond the zone and still count as an intersection
                 wickTouches = wickHigh >= f.min and wickLow <= f.max
-
                 if wickTouches
                     result := true
                     break
     result
-
-// Requires the candle body to remain outside while the wick intersects the FVG.
+// Requires the wick to touch the FVG while the candle body remains outside
 wickOnlyInFVG(price, isBullishSweep) =>
     wickPierces = false
     size = array.size(fvg_records)
     if size > 0
         for i = 0 to size - 1
             f = array.get(fvg_records, i)
-
             if f.isbull == isBullishSweep and bar_index <= f.rightIndex
                 bodyHigh = math.max(open, close)
                 bodyLow  = math.min(open, close)
-
                 wickHigh = high
                 wickLow  = low
-
-                // Keep the candle body entirely outside the FVG.
+                // Candle body remains outside the FVG
                 bodyOutside = bodyHigh < f.min or bodyLow > f.max
-
-                // Allow the wick to extend beyond either FVG boundary.
+                // Wick intersects the FVG, including overshoots beyond the zone
                 wickTouches = wickHigh >= f.min and wickLow <= f.max
-
                 wickPierces := bodyOutside and wickTouches
-
                 if wickPierces
                     break
     wickPierces
@@ -346,16 +290,13 @@ wickOnlyInFVGbar(barOffset, isBullishFVG) =>
                 if wickPierces
                     break
     wickPierces
-
-// Pivot detection
+// Sweep pivots
 ph = ta.pivothigh(len, len)
 pl = ta.pivotlow(len, len)
-
 if not na(ph)
     aPivH.unshift(piv.new(ph, n - len, false, false, false, false))
 if not na(pl)
     aPivL.unshift(piv.new(pl, n - len, false, false, false, false))
-
 // Per-bar alert state
 var bool bullishSweepInFVG = false
 var bool bearishSweepInFVG = false
@@ -363,7 +304,6 @@ bullishSweepInFVG := false
 bearishSweepInFVG := false
 var bool isSweepThisBar = false
 isSweepThisBar := false
-
 // Bearish sweeps from pivot highs
 for i = aPivH.size() - 1 to 0
     get = aPivH.get(i)
@@ -402,7 +342,6 @@ for i = aPivH.size() - 1 to 0
                     isSweepThisBar := true
     if n - get.bix > 2000 or get.mit or get.tak
         aPivH.remove(i).lin.delete()
-
 // Bullish sweeps from pivot lows
 for i = aPivL.size() - 1 to 0
     get = aPivL.get(i)
@@ -439,126 +378,432 @@ for i = aPivL.size() - 1 to 0
                     isSweepThisBar := true
     if n - get.bix > 2000 or get.mit or get.tak
         aPivL.remove(i).lin.delete()
-
-// Detect only the first entry into each FVG.
+// Detects only the first entry into each FVG
 fvgTouchedNow() =>
     var bool touchedBull = false
     var bool touchedBear = false
     touchedBull := false
     touchedBear := false
-
     if array.size(fvg_records) > 0
         for i = 0 to array.size(fvg_records) - 1
             f = array.get(fvg_records, i)
-
-            // Consider active FVGs that have not been touched before.
+            // Process active FVGs that have not been touched before
             if bar_index <= f.rightIndex and not f.touchedOnce
-                // Bullish FVG: first entry from above.
+                // Bullish FVG: first entry from above
                 prevOutsideBull = f.isbull and (low[1] >= f.max)
                 enterBull       = f.isbull and (low < f.max) and (high > f.min)
-
-                // Bearish FVG: first entry from below.
+                // Bearish FVG: first entry from below
                 prevOutsideBear = (not f.isbull) and (high[1] <= f.min)
                 enterBear       = (not f.isbull) and (high > f.min) and (low < f.max)
-
                 condBull = prevOutsideBull and enterBull
                 condBear = prevOutsideBear and enterBear
-
                 if condBull or condBear
-                    // Persist the first-touch state in the stored FVG record.
+                    // Persist the touch state in the FVG record
                     f.touchedOnce := true
                     array.set(fvg_records, i, f)
-
                     if condBull
                         touchedBull := true
                     if condBear
                         touchedBear := true
-
     [touchedBull, touchedBear]
-
-// Per-bar marker state
+// Current-bar signal state
 var bool fireBearNow = false
 var bool fireBullNow = false
 fireBearNow := false
 fireBullNow := false
-
 var bool fireBear = false
 var bool fireBull = false
 fireBear := false
 fireBull := false
-
-//-----------------------------------------------------------------------------
-// BOS and MSS visualization based on candle closes
-//-----------------------------------------------------------------------------
-swingLengthBOS = input.int(25, "Swing Length (BOS/MSS)", minval = 1, group="BOS+MSS")
-
-bullColorBOS = input.color(color.green, "Bullish BOS/MSS color", group="BOS+MSS")
-bearColorBOS = input.color(color.red, "Bearish BOS/MSS color", group="BOS+MSS")
-lineStyleStr = input.string("Dashed", "Line style", options=["Solid", "Dashed", "Dotted"], group="BOS+MSS")
-lineWidth = input.int(1, "Line width", group="BOS+MSS")
-textSize = input.string("Small", "Text size", options=["Tiny", "Small", "Normal", "Large"], group="BOS+MSS")
-
+// BOS and MSS visualization based on candle-body breaks
+swingLengthBOS = input.int(25, "Swing Length (BOS/MSS)", minval = 1, group = "BOS+MSS")
+bullColorBOS = input.color(color.green, "Bullish BOS/MSS Color", group = "BOS+MSS")
+bearColorBOS = input.color(color.red, "Bearish BOS/MSS Color", group = "BOS+MSS")
+lineStyleStr = input.string("Dashed", "Line Style", options = ["Solid", "Dashed", "Dotted"], group = "BOS+MSS")
+lineWidth = input.int(1, "Line Width", group = "BOS+MSS")
+textSize = input.string("Small", "Text Size", options = ["Tiny", "Small", "Normal", "Large"], group = "BOS+MSS")
 getLineStyleBOS(styleStr) =>
     styleStr == "Solid" ? line.style_solid : styleStr == "Dotted" ? line.style_dotted : line.style_dashed
 getTextSizeBOS(sizeStr) =>
     sizeStr == "Tiny" ? size.tiny : sizeStr == "Normal" ? size.normal : sizeStr == "Large" ? size.large : size.small
-
 // Structure pivots
 phBOS = ta.pivothigh(high, swingLengthBOS, swingLengthBOS)
 plBOS = ta.pivotlow(low, swingLengthBOS, swingLengthBOS)
-
 var float lastHighBOS = na
 var float lastLowBOS = na
 var int lastHighTimeBOS = na
 var int lastLowTimeBOS = na
-var int lastBreakTypeBOS = 0  // 1 = bullish break, -1 = bearish break
-
-// Use candle closes rather than wicks for structure breaks.
+var int lastBreakTypeBOS = 0  // 1 = bullish BOS, -1 = bearish BOS
+// Confirm breaks using the candle close rather than the wick
 srcClose = close
 srcHighRef = close
 srcLowRef = close
-
-// Store the most recent pivot high and low.
+// Track the most recent pivot high and low
 if not na(phBOS)
     lastHighBOS := phBOS
     lastHighTimeBOS := time[swingLengthBOS]
 if not na(plBOS)
     lastLowBOS := plBOS
     lastLowTimeBOS := time[swingLengthBOS]
-
-// Track the current break state.
+// Detect close-based structure breaks
 bullBreak = not na(lastHighBOS) and close > lastHighBOS
 bearBreak = not na(lastLowBOS) and close < lastLowBOS
-
-// Trigger each break only once.
+// Emit each break signal once
 bullBreakNow = not na(lastHighBOS) and (close > lastHighBOS) and (close[1] <= lastHighBOS)
 bearBreakNow = not na(lastLowBOS) and (close < lastLowBOS) and (close[1] >= lastLowBOS)
-
 tfLabel = str.tostring(timeframe.multiplier) + "m"
 var int bosMssCandleIndex = na
-// Draw BOS/MSS labels and levels.
+// BOS/MSS labels and lines
 if bullBreakNow and not na(lastHighTimeBOS)
     isMSS = lastBreakTypeBOS == -1
-    structureLabelText = isMSS ? "MSS\n" + tfLabel : "BOS\n" + tfLabel
-    label.new(lastHighTimeBOS, lastHighBOS, structureLabelText, xloc.bar_time, style=label.style_label_down, color=color.new(color.white, 100), textcolor=bullColorBOS, size=getTextSizeBOS(textSize))
+    tekst = isMSS ? "MSS\n" + tfLabel : "BOS\n" + tfLabel
+    label.new(lastHighTimeBOS, lastHighBOS, tekst, xloc.bar_time, style = label.style_label_down, color = color.new(color.white, 100), textcolor = bullColorBOS, size = getTextSizeBOS(textSize))
     fireBull := true
-    line.new(lastHighTimeBOS, lastHighBOS, time, lastHighBOS, xloc.bar_time, color=bullColorBOS, width=lineWidth, style=getLineStyleBOS(lineStyleStr))
+    line.new(lastHighTimeBOS, lastHighBOS, time, lastHighBOS, xloc.bar_time, color = bullColorBOS, width = lineWidth, style = getLineStyleBOS(lineStyleStr))
     lastBreakTypeBOS := 1
     bosMssCandleIndex := bar_index
-
 if bearBreakNow and not na(lastLowTimeBOS)
     isMSS = lastBreakTypeBOS == 1
-    structureLabelText = isMSS ? "MSS\n" + tfLabel : "BOS\n" + tfLabel
-    label.new(lastLowTimeBOS, lastLowBOS, structureLabelText, xloc.bar_time, style=label.style_label_up, color=color.new(color.white, 100), textcolor=bearColorBOS, size=getTextSizeBOS(textSize))
+    tekst = isMSS ? "MSS\n" + tfLabel : "BOS\n" + tfLabel
+    label.new(lastLowTimeBOS, lastLowBOS, tekst, xloc.bar_time, style = label.style_label_up, color = color.new(color.white, 100), textcolor = bearColorBOS, size = getTextSizeBOS(textSize))
     fireBear := true
-    line.new(lastLowTimeBOS, lastLowBOS, time, lastLowBOS, xloc.bar_time, color=bearColorBOS, width=lineWidth, style=getLineStyleBOS(lineStyleStr))
+    line.new(lastLowTimeBOS, lastLowBOS, time, lastLowBOS, xloc.bar_time, color = bearColorBOS, width = lineWidth, style = getLineStyleBOS(lineStyleStr))
     lastBreakTypeBOS := -1
     bosMssCandleIndex := bar_index
-
-// Alert conditions
-alertcondition(bullishSweepInFVG or bearishSweepInFVG, title = "Liquidity sweep inside FVG", message = "A liquidity sweep was detected inside a matching FVG.")
-alertcondition((bullishSweepInFVG or bearishSweepInFVG) and onlyWickInFVG, title = "Wick-only sweep inside FVG", message = "Only the candle wick entered the matching FVG.")
-alertcondition((bullishSweepInFVG or bearishSweepInFVG) and not onlyLQinsideFVG and not onlyWickInFVG, title = "Standard liquidity sweep", message = "A standard liquidity sweep was detected without an FVG filter.")
-
+// Sessions module adapted from "Sessions [LuxAlgo]" by LuxAlgo
+// Source: https://www.tradingview.com/script/bkb6vZDz-Sessions-LuxAlgo/
+// License: CC BY-NC-SA 4.0 — https://creativecommons.org/licenses/by-nc-sa/4.0/
+// Session A
+show_sesa = input.bool(true, '', inline = 'sesa', group = 'Session A')
+sesa_txt = input.string('New York', '', inline = 'sesa', group = 'Session A')
+sesa_ses = input.session('1330-2200', '', inline = 'sesa', group = 'Session A')
+sesa_css = input.color(#ff5d00, '', inline = 'sesa', group = 'Session A')
+sesa_range = input.bool(true, 'Range', inline = 'sesa_overlays', group = 'Session A')
+sesa_tl = input.bool(false, 'Trendline', inline = 'sesa_overlays', group = 'Session A')
+sesa_avg = input.bool(false, 'Mean', inline = 'sesa_overlays', group = 'Session A')
+sesa_vwap = input.bool(false, 'VWAP', inline = 'sesa_overlays', group = 'Session A')
+sesa_maxmin = input.bool(false, 'Max/Min', inline = 'sesa_overlays', group = 'Session A')
+// Session B
+show_sesb = input.bool(true, '', inline = 'sesb', group = 'Session B')
+sesb_txt = input.string('London', '', inline = 'sesb', group = 'Session B')
+sesb_ses = input.session('0600-1800', '', inline = 'sesb', group = 'Session B')
+sesb_css = input.color(#2157f3, '', inline = 'sesb', group = 'Session B')
+sesb_range = input.bool(true, 'Range', inline = 'sesb_overlays', group = 'Session B')
+sesb_tl = input.bool(false, 'Trendline', inline = 'sesb_overlays', group = 'Session B')
+sesb_avg = input.bool(false, 'Mean', inline = 'sesb_overlays', group = 'Session B')
+sesb_vwap = input.bool(false, 'VWAP', inline = 'sesb_overlays', group = 'Session B')
+sesb_maxmin = input.bool(false, 'Max/Min', inline = 'sesb_overlays', group = 'Session B')
+// Session C
+show_sesc = input.bool(true, '', inline = 'sesc', group = 'Session C')
+sesc_txt = input.string('Tokyo', '', inline = 'sesc', group = 'Session C')
+sesc_ses = input.session('0000-0900', '', inline = 'sesc', group = 'Session C')
+sesc_css = input.color(#e91e63, '', inline = 'sesc', group = 'Session C')
+sesc_range = input.bool(true, 'Range', inline = 'sesc_overlays', group = 'Session C')
+sesc_tl = input.bool(false, 'Trendline', inline = 'sesc_overlays', group = 'Session C')
+sesc_avg = input.bool(false, 'Mean', inline = 'sesc_overlays', group = 'Session C')
+sesc_vwap = input.bool(false, 'VWAP', inline = 'sesc_overlays', group = 'Session C')
+sesc_maxmin = input.bool(false, 'Max/Min', inline = 'sesc_overlays', group = 'Session C')
+// Session D
+show_sesd = input.bool(false, '', inline = 'sesd', group = 'Session D')
+sesd_txt = input.string('Sydney', '', inline = 'sesd', group = 'Session D')
+sesd_ses = input.session('2100-0600', '', inline = 'sesd', group = 'Session D')
+sesd_css = input.color(#ffeb3b, '', inline = 'sesd', group = 'Session D')
+sesd_range = input.bool(true, 'Range', inline = 'sesd_overlays', group = 'Session D')
+sesd_tl = input.bool(false, 'Trendline', inline = 'sesd_overlays', group = 'Session D')
+sesd_avg = input.bool(false, 'Mean', inline = 'sesd_overlays', group = 'Session D')
+sesd_vwap = input.bool(false, 'VWAP', inline = 'sesd_overlays', group = 'Session D')
+sesd_maxmin = input.bool(false, 'Max/Min', inline = 'sesd_overlays', group = 'Session D')
+// Timezones
+tz_incr = input.int(0, 'UTC (+/-)', group = 'Timezone')
+use_exchange = input.bool(false, 'Use Exchange Timezone', group = 'Timezone')
+// Ranges Options
+bg_transp = input.float(90, 'Range Area Transparency', group = 'Ranges Settings')
+show_outline = input.bool(true, 'Range Outline', group = 'Ranges Settings')
+show_txt = input.bool(true, 'Range Label', group = 'Ranges Settings')
+// Dashboard
+show_dash = input.bool(false, 'Show Dashboard', group = 'Dashboard')
+advanced_dash = input.bool(false, 'Advanced Dashboard', group = 'Dashboard')
+dash_loc = input.string('Top Right', 'Dashboard Location', options = ['Top Right', 'Bottom Right', 'Bottom Left'], group = 'Dashboard')
+sessions_text_size = input.string('Small', 'Dashboard Size', options = ['Tiny', 'Small', 'Normal'], group = 'Dashboard')
+// Divider
+show_ses_div = input.bool(false, 'Show Sessions Divider', group = 'Dividers')
+show_day_div = input.bool(false, 'Show Daily Divider', group = 'Dividers')
+get_avg(session) =>
+    var int sess_len = 1
+    var float csma = na
+    var float sma = na
+    if session and not session[1]
+        sess_len := 1
+        csma := close
+    if session and session[1]
+        sess_len += 1
+        csma += close
+        sma := csma / sess_len
+    sma
+get_linreg(session) =>
+    var int sess_len = 1
+    var float cwma = na
+    var float csma = na
+    var float csma2 = na
+    var float y1 = na
+    var float y2 = na
+    var float stdev = na
+    var float r2 = na
+    if session and not session[1]
+        sess_len := 1
+        cwma := close
+        csma := close
+        csma2 := close * close
+    if session and session[1]
+        sess_len += 1
+        csma += close
+        csma2 += close * close
+        cwma += close * sess_len
+        sma = csma / sess_len
+        wma = cwma / (sess_len * (sess_len + 1) / 2)
+        cov = (wma - sma) * (sess_len + 1) / 2
+        stdev := math.sqrt(csma2 / sess_len - sma * sma)
+        r2 := cov / (stdev * (math.sqrt(sess_len * sess_len - 1) / (2 * math.sqrt(3))))
+        y1 := 4 * sma - 3 * wma
+        y2 := 3 * wma - 2 * sma
+    [y1, y2, stdev, r2]
+get_vwap(session) =>
+    var float num = na
+    var float den = na
+    if session and not session[1]
+        num := close * volume
+        den := volume
+    else if session and session[1]
+        num += close * volume
+        den += volume
+    else
+        num := na
+    [num, den]
+set_session_line(session, y1, y2, session_css) =>
+    var line tl = na
+    if session and not session[1]
+        tl := line.new(n, close, n, close, color = session_css)
+    if session and session[1]
+        line.set_y1(tl, y1)
+        line.set_xy2(tl, n, y2)
+get_range(session, session_name, session_css) =>
+    var int session_start_time = 0
+    var float session_max = high
+    var float session_min = low
+    var box bx = na
+    var label lbl = na
+    if session and not session[1]
+        session_start_time := time
+        session_max := high
+        session_min := low
+        bx := box.new(n, session_max, n, session_min, bgcolor = color.new(session_css, bg_transp), border_color = show_outline ? session_css : na, border_style = line.style_dotted)
+        if show_txt
+            lbl := label.new(session_start_time, session_max, session_name, xloc = xloc.bar_time, textcolor = session_css, style = label.style_label_down, color = color.new(color.white, 100), size = size.tiny)
+    if session and session[1]
+        session_max := math.max(high, session_max)
+        session_min := math.min(low, session_min)
+        box.set_top(bx, session_max)
+        box.set_rightbottom(bx, n, session_min)
+        if show_txt
+            label.set_xy(lbl, int(math.avg(session_start_time, time)), session_max)
+    [session ? na : session_max, session ? na : session_min]
+sessions_tf = timeframe.period
+var sessions_tz = use_exchange ? syminfo.timezone : str.format('UTC{0}{1}', tz_incr >= 0 ? '+' : '-', math.abs(tz_incr))
+is_sesa = not na(time(sessions_tf, sesa_ses, sessions_tz))
+is_sesb = not na(time(sessions_tf, sesb_ses, sessions_tz))
+is_sesc = not na(time(sessions_tf, sesc_ses, sessions_tz))
+is_sesd = not na(time(sessions_tf, sesd_ses, sessions_tz))
+var table_position = dash_loc == 'Bottom Left' ? position.bottom_left : dash_loc == 'Top Right' ? position.top_right : position.bottom_right
+var table_size = sessions_text_size == 'Tiny' ? size.tiny : sessions_text_size == 'Small' ? size.small : size.normal
+var tb = table.new(table_position, 5, 6, bgcolor = #1e222d, border_color = #373a46, border_width = 1, frame_color = #373a46, frame_width = 1)
+if barstate.isfirst and show_dash
+    table.cell(tb, 0, 0, 'LuxAlgo', text_color = color.white, text_size = table_size)
+    table.merge_cells(tb, 0, 0, 4, 0)
+    table.cell(tb, 0, 2, sesa_txt, text_color = sesa_css, text_size = table_size)
+    table.cell(tb, 0, 3, sesb_txt, text_color = sesb_css, text_size = table_size)
+    table.cell(tb, 0, 4, sesc_txt, text_color = sesc_css, text_size = table_size)
+    table.cell(tb, 0, 5, sesd_txt, text_color = sesd_css, text_size = table_size)
+    if advanced_dash
+        table.cell(tb, 0, 1, 'Session', text_color = color.white, text_size = table_size)
+        table.cell(tb, 1, 1, 'Status', text_color = color.white, text_size = table_size)
+        table.cell(tb, 2, 1, 'Trend', text_color = color.white, text_size = table_size)
+        table.cell(tb, 3, 1, 'Volume', text_color = color.white, text_size = table_size)
+        table.cell(tb, 4, 1, 'σ', text_color = color.white, text_size = table_size)
+if barstate.islast and show_dash
+    table.cell(tb, 1, 2, is_sesa ? 'Active' : 'Innactive', bgcolor = is_sesa ? #089981 : #f23645, text_color = color.white, text_size = table_size)
+    table.cell(tb, 1, 3, is_sesb ? 'Active' : 'Innactive', bgcolor = is_sesb ? #089981 : #f23645, text_color = color.white, text_size = table_size)
+    table.cell(tb, 1, 4, is_sesc ? 'Active' : 'Innactive', bgcolor = is_sesc ? #089981 : #f23645, text_color = color.white, text_size = table_size)
+    table.cell(tb, 1, 5, is_sesd ? 'Active' : 'Innactive', bgcolor = is_sesd ? #089981 : #f23645, text_color = color.white, text_size = table_size)
+var float max_sesa = na
+var float min_sesa = na
+var float max_sesb = na
+var float min_sesb = na
+var float max_sesc = na
+var float min_sesc = na
+var float max_sesd = na
+var float min_sesd = na
+if show_sesa and sesa_range
+    [max, min] = get_range(is_sesa, sesa_txt, sesa_css)
+    max_sesa := max
+    min_sesa := min
+if show_sesb and sesb_range
+    [max, min] = get_range(is_sesb, sesb_txt, sesb_css)
+    max_sesb := max
+    min_sesb := min
+if show_sesc and sesc_range
+    [max, min] = get_range(is_sesc, sesc_txt, sesc_css)
+    max_sesc := max
+    min_sesc := min
+if show_sesd and sesd_range
+    [max, min] = get_range(is_sesd, sesd_txt, sesd_css)
+    max_sesd := max
+    min_sesd := min
+if show_sesa and (sesa_tl or advanced_dash)
+    [y1, y2, stdev, r2] = get_linreg(is_sesa)
+    if advanced_dash
+        table.cell(tb, 2, 2, str.tostring(r2, '#.##'), bgcolor = r2 > 0 ? #089981 : #f23645, text_color = color.white, text_size = table_size)
+        table.cell(tb, 4, 2, str.tostring(stdev, '#.####'), text_color = color.white, text_size = table_size)
+    if sesa_tl
+        set_session_line(is_sesa, y1, y2, sesa_css)
+if show_sesb and (sesb_tl or advanced_dash)
+    [y1, y2, stdev, r2] = get_linreg(is_sesb)
+    if advanced_dash
+        table.cell(tb, 2, 3, str.tostring(r2, '#.##'), bgcolor = r2 > 0 ? #089981 : #f23645, text_color = color.white, text_size = table_size)
+        table.cell(tb, 4, 3, str.tostring(stdev, '#.####'), text_color = color.white, text_size = table_size)
+    if sesb_tl
+        set_session_line(is_sesb, y1, y2, sesb_css)
+if show_sesc and (sesc_tl or advanced_dash)
+    [y1, y2, stdev, r2] = get_linreg(is_sesc)
+    if advanced_dash
+        table.cell(tb, 2, 4, str.tostring(r2, '#.##'), bgcolor = r2 > 0 ? #089981 : #f23645, text_color = color.white, text_size = table_size)
+        table.cell(tb, 4, 4, str.tostring(stdev, '#.####'), text_color = color.white, text_size = table_size)
+    if sesc_tl
+        set_session_line(is_sesc, y1, y2, sesc_css)
+if show_sesd and (sesd_tl or advanced_dash)
+    [y1, y2, stdev, r2] = get_linreg(is_sesd)
+    if advanced_dash
+        table.cell(tb, 2, 5, str.tostring(r2, '#.##'), bgcolor = r2 > 0 ? #089981 : #f23645, text_color = color.white, text_size = table_size)
+        table.cell(tb, 4, 5, str.tostring(stdev, '#.####'), text_color = color.white, text_size = table_size)
+    if sesd_tl
+        set_session_line(is_sesd, y1, y2, sesd_css)
+if show_sesa and sesa_avg
+    avg = get_avg(is_sesa)
+    set_session_line(is_sesa, avg, avg, sesa_css)
+if show_sesb and sesb_avg
+    avg = get_avg(is_sesb)
+    set_session_line(is_sesb, avg, avg, sesb_css)
+if show_sesc and sesc_avg
+    avg = get_avg(is_sesc)
+    set_session_line(is_sesc, avg, avg, sesc_css)
+if show_sesd and sesd_avg
+    avg = get_avg(is_sesd)
+    set_session_line(is_sesd, avg, avg, sesd_css)
+var float vwap_a = na
+var float vwap_b = na
+var float vwap_c = na
+var float vwap_d = na
+if show_sesa and (sesa_vwap or advanced_dash)
+    [num, den] = get_vwap(is_sesa)
+    if sesa_vwap
+        vwap_a := num / den
+    if advanced_dash
+        table.cell(tb, 3, 2, str.tostring(den, format.volume), text_color = color.white, text_size = table_size)
+if show_sesb and (sesb_vwap or advanced_dash)
+    [num, den] = get_vwap(is_sesb)
+    if sesb_vwap
+        vwap_b := num / den
+    if advanced_dash
+        table.cell(tb, 3, 3, str.tostring(den, format.volume), text_color = color.white, text_size = table_size)
+if show_sesc and (sesc_vwap or advanced_dash)
+    [num, den] = get_vwap(is_sesc)
+    if sesc_vwap
+        vwap_c := num / den
+    if advanced_dash
+        table.cell(tb, 3, 4, str.tostring(den, format.volume), text_color = color.white, text_size = table_size)
+if show_sesd and (sesd_vwap or advanced_dash)
+    [num, den] = get_vwap(is_sesd)
+    if sesd_vwap
+        vwap_d := num / den
+    if advanced_dash
+        table.cell(tb, 3, 5, str.tostring(den, format.volume), text_color = color.white, text_size = table_size)
+plot(sesa_maxmin ? max_sesa : na, 'Session A Maximum', sesa_css, 1, plot.style_linebr)
+plot(sesa_maxmin ? min_sesa : na, 'Session A Minimum', sesa_css, 1, plot.style_linebr)
+plot(sesb_maxmin ? max_sesb : na, 'Session B Maximum', sesb_css, 1, plot.style_linebr)
+plot(sesb_maxmin ? min_sesb : na, 'Session B Minimum', sesb_css, 1, plot.style_linebr)
+plot(sesc_maxmin ? max_sesc : na, 'Session C Maximum', sesc_css, 1, plot.style_linebr)
+plot(sesc_maxmin ? min_sesc : na, 'Session C Minimum', sesc_css, 1, plot.style_linebr)
+plot(sesd_maxmin ? max_sesd : na, 'Session D Maximum', sesd_css, 1, plot.style_linebr)
+plot(sesd_maxmin ? min_sesd : na, 'Session D Minimum', sesd_css, 1, plot.style_linebr)
+plot(vwap_a, 'Session A VWAP', sesa_css, 1, plot.style_linebr)
+plot(vwap_b, 'Session B VWAP', sesb_css, 1, plot.style_linebr)
+plot(vwap_c, 'Session C VWAP', sesc_css, 1, plot.style_linebr)
+plot(vwap_d, 'Session D VWAP', sesd_css, 1, plot.style_linebr)
+plotshape(is_sesa and show_ses_div and show_sesa, '·', shape.square, location.bottom, na, text = '.', textcolor = sesa_css, size = size.tiny, display = display.all - display.status_line, editable = false)
+plotshape(is_sesa != is_sesa[1] and show_ses_div and show_sesa, 'NYE', shape.labelup, location.bottom, na, text = '❚', textcolor = sesa_css, size = size.tiny, display = display.all - display.status_line, editable = false)
+plotshape(is_sesb and show_ses_div and show_sesb, '·', shape.labelup, location.bottom, na, text = '.', textcolor = sesb_css, size = size.tiny, display = display.all - display.status_line, editable = false)
+plotshape(is_sesb != is_sesb[1] and show_ses_div and show_sesb, 'LDN', shape.labelup, location.bottom, na, text = '❚', textcolor = sesb_css, size = size.tiny, display = display.all - display.status_line, editable = false)
+plotshape(is_sesc and show_ses_div and show_sesc, '·', shape.square, location.bottom, na, text = '.', textcolor = sesc_css, size = size.tiny, display = display.all - display.status_line, editable = false)
+plotshape(is_sesc != is_sesc[1] and show_ses_div and show_sesc, 'TYO', shape.labelup, location.bottom, na, text = '❚', textcolor = sesc_css, size = size.tiny, display = display.all - display.status_line, editable = false)
+plotshape(is_sesd and show_ses_div and show_sesd, '·', shape.labelup, location.bottom, na, text = '.', textcolor = sesd_css, size = size.tiny, display = display.all - display.status_line, editable = false)
+plotshape(is_sesd != is_sesd[1] and show_ses_div and show_sesd, 'SYD', shape.labelup, location.bottom, na, text = '❚', textcolor = sesd_css, size = size.tiny, display = display.all - display.status_line, editable = false)
+sessions_day = dayofweek
+if sessions_day != sessions_day[1] and show_day_div
+    line.new(n, close + syminfo.mintick, n, close - syminfo.mintick, color = color.gray, extend = extend.both, style = line.style_dashed)
+    sessions_day_txt = sessions_day == 1 ? 'Sunday' : sessions_day == 2 ? 'Monday' : sessions_day == 3 ? 'Tuesday' : sessions_day == 4 ? 'Wednesday' : sessions_day == 5 ? 'Thursday' : sessions_day == 6 ? 'Friday' : 'Saturday'
+    label.new(n, high, sessions_day_txt, style = label.style_label_down, textcolor = color.gray, color = color.new(color.white, 100), size = size.tiny)
+// Fractals and pivots module adapted from work by TradingView author nephew_sam_
+// Author profile: https://www.tradingview.com/u/nephew_sam_/
+var string fractals_grp = "••••••• FRACTALS •••••••"
+showFractals = input.bool(true, title = 'Show fractal points?', group = fractals_grp)
+filterFractal = input.string(title = 'Filter 3/5 bar fractal', defval = '3', options = ['3', '5'], group = fractals_grp)
+isRegularFractal(mode, fractal_n) =>
+    ret = mode == 'Buy' ? high[fractal_n - 1] < high[fractal_n] and high[fractal_n + 1] < high[fractal_n] : mode == 'Sell' ? low[fractal_n - 1] > low[fractal_n] and low[fractal_n + 1] > low[fractal_n] : false
+    ret
+isBWFractal(mode, fractal_n) =>
+    ret = mode == 'Buy' ? high[fractal_n - 2] < high[fractal_n] and high[fractal_n - 1] < high[fractal_n] and high[fractal_n + 1] < high[fractal_n] and high[fractal_n + 2] < high[fractal_n] : mode == 'Sell' ? low[fractal_n - 2] > low[fractal_n] and low[fractal_n - 1] > low[fractal_n] and low[fractal_n + 1] > low[fractal_n] and low[fractal_n + 2] > low[fractal_n] : false
+    ret
+isFractalHigh(i) =>
+    filterFractal == '3' ? isRegularFractal('Buy', i) : isBWFractal('Buy', i + 1)
+isFractalLow(i) =>
+    filterFractal == '3' ? isRegularFractal('Sell', i) : isBWFractal('Sell', i + 1)
+plotshape(showFractals and isFractalHigh(1), title = 'Fractal High', style = shape.triangledown, location = location.abovebar, color = color.black, offset = filterFractal == '3' ? -1 : -2, size = size.auto)
+plotshape(showFractals and isFractalLow(1), title = 'Fractal Low', style = shape.triangleup, location = location.belowbar, color = color.black, offset = filterFractal == '3' ? -1 : -2, size = size.auto)
+// Pivots
+var string pivots_grp = "••••••• PIVOTS •••••••"
+ShowPivots = input.bool(title = 'Show Pivot points?', defval = false, group = pivots_grp)
+fractal_lb = input.int(5, title = 'Left Bars', minval = 1, inline = '1', group = pivots_grp)
+fractal_rb = input.int(4, title = 'Right Bars', minval = 1, inline = '1', group = pivots_grp)
+showHHLL = input.bool(true, title = 'Show HH/LL?', group = pivots_grp)
+hhCol = input.color(color.lime, 'HH', inline = '2', group = pivots_grp)
+lhCol = input.color(color.red, 'LH', inline = '2', group = pivots_grp)
+llCol = input.color(color.red, 'LL', inline = '2', group = pivots_grp)
+hlCol = input.color(color.lime, 'HL', inline = '2', group = pivots_grp)
+var pivotHighs = array.new_float(3)
+var pivotLows = array.new_float(3)
+fractal_ph = ta.pivothigh(fractal_lb, fractal_rb)
+fractal_ph1 = ta.valuewhen(not na(fractal_ph), high[fractal_rb], 1)
+fractal_phSince = ta.barssince(not na(fractal_ph))
+fractal_pl = ta.pivotlow(fractal_lb, fractal_rb)
+fractal_pl1 = ta.valuewhen(not na(fractal_pl), low[fractal_rb], 1)
+hh = fractal_ph > fractal_ph1
+lh = fractal_ph < fractal_ph1
+ll = fractal_pl < fractal_pl1
+hl = fractal_pl > fractal_pl1
+_transparent = color.new(color.white, 100)
+plotshape(not na(fractal_ph) and ShowPivots and hh, title = 'HH', style = shape.triangledown, location = location.abovebar, text = 'HH', textcolor = showHHLL ? hhCol : _transparent, color = hhCol, offset = -fractal_rb, size = size.auto)
+plotshape(not na(fractal_ph) and ShowPivots and lh, title = 'LH', style = shape.triangledown, location = location.abovebar, text = 'LH', textcolor = showHHLL ? lhCol : _transparent, color = lhCol, offset = -fractal_rb, size = size.auto)
+plotshape(not na(fractal_pl) and ShowPivots and ll, title = 'LL', style = shape.triangleup, location = location.belowbar, text = 'LL', textcolor = showHHLL ? llCol : _transparent, color = llCol, offset = -fractal_rb, size = size.auto)
+plotshape(not na(fractal_pl) and ShowPivots and hl, title = 'HL', style = shape.triangleup, location = location.belowbar, text = 'HL', textcolor = showHHLL ? hlCol : _transparent, color = hlCol, offset = -fractal_rb, size = size.auto)
+var lastPH = 'na'
+var lastPL = 'na'
+if not na(fractal_ph)
+    if hh
+        lastPH := 'HH'
+    else if lh
+        lastPH := 'LH'
+// Alerts
+alertcondition(bullishSweepInFVG or bearishSweepInFVG, title = "Sweep Inside FVG Detected", message = "A liquidity sweep was detected inside a matching FVG.")
+alertcondition((bullishSweepInFVG or bearishSweepInFVG) and onlyWickInFVG, title = "Wick-Only Sweep Inside FVG", message = "Only the candle wick touched the FVG.")
+alertcondition((bullishSweepInFVG or bearishSweepInFVG) and not onlyLQinsideFVG and not onlyWickInFVG, title = "Standard Liquidity Sweep", message = "A standard liquidity sweep was detected without FVG filters.")
 [touchBullFVG, touchBearFVG] = fvgTouchedNow()
-alertcondition(touchBullFVG or touchBearFVG, title="FVG touch detected", message="The current candle entered a bullish or bearish FVG.")
+alertcondition(touchBullFVG or touchBearFVG, title = "FVG Touch Detected", message = "The current candle entered a bullish or bearish FVG.")
